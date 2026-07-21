@@ -58,6 +58,11 @@ ART_CAP = 200000  # bytes; skip larger thumbnails. Some YT Music tracks ship ~10
 PATCH_STEP_SEC = 0.2
 JUMP_THRESHOLD_SEC = 0.4
 
+# Re-attempt a track's lyrics this often (seconds) until they're present, so a
+# transient LRCLIB outage doesn't leave the phone stuck on "loading" for the
+# whole song. The first attempt fires immediately on a track change.
+LYRICS_RETRY_SEC = 12.0
+
 # How long to ignore the art cache and keep reading the thumbnail after a
 # track change. GSMTC's thumbnail handoff is the dominant race; ~6s gives it
 # plenty of room to settle.
@@ -236,7 +241,10 @@ async def _poll_loop(state, config, session, main_loop, stop: threading.Event) -
     last_playing = None
     last_pos_pub: float | None = None
     no_session_since = None
-    last_lyrics_key = None   # trackKey we last kicked a lyrics fetch for
+    last_lyrics_key = None       # trackKey of the last lyrics fetch we kicked
+    last_lyrics_attempt = 0.0    # monotonic time of that attempt (for retries)
+    last_media = None            # most-recently-published media dict (for lyrics)
+    lyrics_fut = None            # keep a ref so the scheduled fetch task isn't GC'd
     errored = False
     # Monotonic deadline while we keep ignoring the art cache and re-reading
     # the thumbnail on every tick. Set to "now + ART_SETTLE_SEC" on every
@@ -295,23 +303,9 @@ async def _poll_loop(state, config, session, main_loop, stop: threading.Event) -
                 last_art = art
                 last_playing = media["playing"]
                 last_pos_pub = media["positionSec"]
+                last_media = media
                 pub = {k: v for k, v in media.items() if k != "trackKey"}
                 publish(state.set_section, "media", pub)
-                # Request lyrics once per new track. Gating on the trackKey (not
-                # on a single in-flight future) means a new track always gets
-                # its own fetch even if a previous, slower fetch is still
-                # running -- that gap is what left the *old* song's lyrics
-                # showing. Overlap is safe: lyrics.fetch only publishes if the
-                # current media still matches the track it fetched.
-                if track_key != last_lyrics_key:
-                    last_lyrics_key = track_key
-                    asyncio.run_coroutine_threadsafe(
-                        lyrics_mod.fetch(
-                            state, session, track_key,
-                            media["artist"], media["title"], media["album"], media["durationSec"],
-                        ),
-                        main_loop,
-                    )
             else:
                 # Tight, non-flooding position update.
                 pos = media["positionSec"]
@@ -361,18 +355,9 @@ async def _poll_loop(state, config, session, main_loop, stop: threading.Event) -
                             last_art = media2["artDataUrl"]
                             last_playing = media2["playing"]
                             last_pos_pub = media2["positionSec"]
+                            last_media = media2
                             pub2 = {k: v for k, v in media2.items() if k != "trackKey"}
                             publish(state.set_section, "media", pub2)
-                            if tk2 != last_lyrics_key:
-                                last_lyrics_key = tk2
-                                asyncio.run_coroutine_threadsafe(
-                                    lyrics_mod.fetch(
-                                        state, session, tk2,
-                                        media2["artist"], media2["title"], media2["album"],
-                                        media2["durationSec"],
-                                    ),
-                                    main_loop,
-                                )
                         else:
                             last_pos_pub = media2["positionSec"]
                             publish(
@@ -384,6 +369,30 @@ async def _poll_loop(state, config, session, main_loop, stop: threading.Event) -
                                     "playing": media2["playing"],
                                 },
                             )
+
+            # 3) Lyrics: ensure the current track has lyrics, retrying until it
+            #    does. Fires immediately when the track changes, then every
+            #    LYRICS_RETRY_SEC while they're still missing (LRCLIB is
+            #    occasionally down/slow -- don't strand the phone on "loading").
+            #    Overlapping fetches are safe (each publishes only if it still
+            #    matches the current track); we keep the future ref so the
+            #    scheduled task isn't garbage-collected mid-flight.
+            if last_track_key and last_media is not None:
+                cur_ly = state.get("lyrics")
+                have_lyrics = cur_ly is not None and cur_ly.get("trackKey") == last_track_key
+                now_m = time.monotonic()
+                due = last_track_key != last_lyrics_key or (now_m - last_lyrics_attempt) >= LYRICS_RETRY_SEC
+                if not have_lyrics and due:
+                    last_lyrics_key = last_track_key
+                    last_lyrics_attempt = now_m
+                    lyrics_fut = asyncio.run_coroutine_threadsafe(
+                        lyrics_mod.fetch(
+                            state, session, last_track_key,
+                            last_media["artist"], last_media["title"],
+                            last_media["album"], last_media["durationSec"],
+                        ),
+                        main_loop,
+                    )
         else:
             if no_session_since is None:
                 no_session_since = time.time()
@@ -394,6 +403,7 @@ async def _poll_loop(state, config, session, main_loop, stop: threading.Event) -
                 last_art = "__init__"
                 last_pos_pub = None
                 last_playing = None
+                last_media = None
 
         await asyncio.sleep(interval)
 

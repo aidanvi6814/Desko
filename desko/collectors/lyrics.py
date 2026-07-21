@@ -73,37 +73,54 @@ async def start(state, config, session) -> None:
     return
 
 
-async def fetch(state, session, track_key, artist, title, album, duration_sec):
+# LRCLIB asks API users to identify themselves; a UA also avoids some generic
+# bot/rate-limit rejections.
+_HEADERS = {"User-Agent": "Desko desk dashboard (https://github.com/)"}
+
+
+def _publish_if_current(state, track_key, data) -> None:
+    """Publish lyrics only if the user hasn't already moved to another track."""
+    cur = state.get("media")
+    if cur and f"{cur.get('artist', '')}||{cur.get('title', '')}" == track_key:
+        state.set_section("lyrics", data)
+
+
+async def fetch(state, session, track_key, artist, title, album, duration_sec) -> bool:
+    """Fetch + publish lyrics for a track.
+
+    Returns True when the result is *definitive* (found lyrics, or a confirmed
+    404 = no lyrics), False on a transient failure (5xx / timeout / network) so
+    the caller knows it's worth retrying. Only definitive results are cached --
+    a transient LRCLIB outage must not get baked in as "no lyrics".
+    """
     cached = _load_cache(track_key)
     if cached is not None:
-        state.set_section("lyrics", cached)
-        return
+        _publish_if_current(state, track_key, cached)
+        return True
 
     try:
         params = {"artist_name": artist, "track_name": title, "album_name": album or ""}
         if duration_sec:
             params["duration"] = str(int(duration_sec))
-        async with session.get(LRC_URL, params=params, timeout=10) as r:
+        async with session.get(LRC_URL, params=params, headers=_HEADERS, timeout=10) as r:
             if r.status == 404:
                 data = {"trackKey": track_key, "synced": None, "plain": None, "found": False}
                 _save_cache(track_key, data)
-                state.set_section("lyrics", data)
-                return
+                _publish_if_current(state, track_key, data)
+                return True
             if r.status != 200:
-                log.debug("lrclib status %s for %r", r.status, track_key)
-                return
+                # 5xx / rate-limit / etc. -- transient, don't cache, let it retry.
+                log.warning("lrclib status %s for %r (will retry)", r.status, track_key)
+                return False
             j = await r.json()
     except Exception as e:
-        log.warning("lrclib fetch failed: %s", e)
-        return
+        log.warning("lrclib fetch failed for %r (will retry): %s", track_key, e)
+        return False
 
     synced = _parse_lrc(j.get("syncedLyrics"))
     plain = j.get("plainLyrics") or None
     found = bool(synced or plain)
     data = {"trackKey": track_key, "synced": synced, "plain": plain, "found": found}
     _save_cache(track_key, data)
-
-    # Only publish if the user hasn't already moved to a different track.
-    cur = state.get("media")
-    if cur and f"{cur.get('artist', '')}||{cur.get('title', '')}" == track_key:
-        state.set_section("lyrics", data)
+    _publish_if_current(state, track_key, data)
+    return True
