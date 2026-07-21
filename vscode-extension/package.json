@@ -1,0 +1,16 @@
+{
+  "name": "desko-status",
+  "displayName": "Desko Status",
+  "description": "Reports VS Code workspace + git status to the Desko desk dashboard.",
+  "version": "0.0.2",
+  "publisher": "desko",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [{ "command": "desko-status.ping", "title": "Desko: Ping now" }]
+  },
+  "scripts": {},
+  "dependencies": {}
+}

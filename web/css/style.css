@@ -1,0 +1,427 @@
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/static/fonts/geist-mono-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/static/fonts/geist-mono-700.woff2") format("woff2");
+}
+
+:root {
+  color-scheme: dark;
+  --background: #111511;
+  --foreground: #d9e1d7;
+  --card: #181d18;
+  --primary: #82f59b;
+  --secondary: #252c26;
+  --muted: #202620;
+  --muted-foreground: #7f8d80;
+  --accent: #e6ad57;
+  --bad: #ef5350;
+  --border: #354238;
+  --radius: 0.25rem;
+}
+
+* { box-sizing: border-box; border-color: var(--border); }
+html, body { height: 100%; width: 100%; overflow: hidden; background: var(--background); color: var(--foreground); }
+body { margin: 0; font-family: "Geist Mono", ui-monospace, "Cascadia Code", Consolas, "Courier New", monospace; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+button { color: inherit; font: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+svg { width: 1em; height: 1em; stroke-width: 1.6; }
+img { display: block; }
+
+/* ---- layout shell ---- */
+/* z-index:0 (with position:relative) makes this its own stacking context, so
+   #m-bg's negative z-index below is guaranteed to stay behind everything
+   else in the page regardless of what's above it in the document. */
+.dashboard-shell, .launcher-shell { position: relative; z-index: 0; width: 100vw; height: 100dvh; min-height: 360px; overflow: hidden; background: var(--background); }
+.dashboard-shell::after, .launcher-shell::after { content: ''; pointer-events: none; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent 0 3px, rgb(130 245 155 / 0.018) 3px 4px); z-index: 20; }
+/* Ambient background (music scene only): current album art, blurred +
+   darkened, filling the *whole page* — including behind the system bar, not
+   just the scene content below it — same idea as YT Music's "ambient mode".
+   Lives at the dashboard-shell level (not inside .music-scene) so it can
+   reach behind the header; shown/hidden by music.js's onEnter/onExit since
+   it shouldn't still be visible while looking at another scene. Oversized
+   via a negative inset so the blur filter doesn't reveal sharp edges. */
+.music-bg { position: absolute; inset: -30px; z-index: -1; background-size: cover; background-position: center; filter: blur(40px) saturate(1.5) brightness(.75); opacity: 0; transition: opacity .5s ease; pointer-events: none; }
+.music-bg.visible { opacity: 1; }
+.music-bg::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, rgb(17 21 17 / .2), rgb(17 21 17 / .55)); }
+/* `viewport-fit=cover` (index.html) lets content draw under notches/rounded
+   corners/gesture bars — needs explicit safe-area padding or it gets clipped
+   there. This used to be masked by the old 58px bottom scene-rail, which was
+   tall enough to clear it by accident; without that rail the bottom edge was
+   getting cut on phones with a gesture-nav inset. */
+.scene-frame {
+  height: calc(100dvh - 52px);
+  padding: 10px max(14px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+}
+.scene { height: 100%; animation: scene-in .28s ease-out; display: none !important; }
+.scene.active { display: grid !important; }
+@keyframes scene-in { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: none; } }
+
+/* ---- system bar (top) ---- */
+/* Translucent + blurred instead of a flat card, so the ambient album art
+   (#m-bg) shows through on the music scene; on every other scene there's no
+   art behind it so it just reveals the plain --background, visually close
+   to the old solid --card anyway. */
+.system-bar { height: 52px; display: flex; align-items: center; justify-content: space-between; padding: 0 max(18px, env(safe-area-inset-left)); border-bottom: 1px solid var(--border); background: rgb(24 29 24 / .55); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); font-size: 11px; letter-spacing: .08em; }
+.fs-btn { display: grid; place-items: center; width: 28px; height: 28px; margin-right: 14px; color: var(--muted-foreground); background: transparent; border: 1px solid var(--border); border-radius: var(--radius); transition: color .15s, border-color .15s, background .15s; }
+.fs-btn:hover, .fs-btn:active { color: var(--primary); border-color: var(--primary); background: rgb(130 245 155 / .05); }
+.fs-btn svg { width: 14px; height: 14px; stroke-width: 1.8; }
+.fs-btn .fs-icon-collapse { display: none; }
+body.is-fs .fs-btn .fs-icon-expand { display: none; }
+body.is-fs .fs-btn .fs-icon-collapse { display: block; }
+.wordmark { display: flex; align-items: center; gap: 9px; font-weight: 800; color: var(--primary); text-shadow: 0 1px 4px rgb(0 0 0 / .6); }
+.wordmark small { color: var(--muted-foreground); font-size: 9px; font-weight: 500; letter-spacing: .06em; }
+/* Status/info readouts bumped up in size + weight + a contrast shadow so
+   they stay clearly legible over the now-translucent, sometimes-busy bar. */
+.system-center, .header-time { display: flex; align-items: center; gap: 22px; color: var(--foreground); font-size: 12px; font-weight: 600; text-shadow: 0 1px 4px rgb(0 0 0 / .6); }
+.system-center { padding: 0 22px; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
+.online { color: var(--primary); }
+.online i, .launcher-status i { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--primary); box-shadow: 0 0 8px var(--primary); }
+.header-time { color: var(--foreground); font-size: 14px; }
+.header-time .icon { margin-left: 8px; font-size: 16px; color: var(--foreground); }
+/* Battery: outline stroke in muted, fill rect in primary (green), width driven
+   by app.js from the real Battery Status API. Turns red when low + unplugged. */
+.sb-batt-wrap { display: inline-flex; align-items: center; gap: 6px; color: var(--primary); }
+.sb-batt-wrap .icon { width: 22px; height: 20px; color: var(--muted-foreground); }
+#sb-batt-fill { color: var(--primary); }
+.sb-batt-wrap small { color: var(--foreground); font-size: 11px; font-weight: 600; }
+.sb-batt-wrap.batt-low #sb-batt-fill { color: var(--bad); }
+.sb-batt-wrap.batt-low small { color: var(--bad); }
+/* Explicit red for "unlinked" (was just a dim gray before, easy to miss). */
+.dashboard-shell.offline .online, .dashboard-shell.offline #sb-link-text { color: var(--bad); }
+.dashboard-shell.offline .online i { background: var(--bad); box-shadow: 0 0 8px var(--bad); }
+/* Lock button — always visible in the top bar (not buried in the launcher).
+   Icon-only: open padlock = AUTO (context engine drives scene switching),
+   closed padlock = LOCKED (frozen on whatever scene is showing — see
+   context.py). */
+.lock-btn { display: grid; place-items: center; width: 28px; height: 28px; margin-left: 16px; color: var(--muted-foreground); background: transparent; border: 1px solid var(--border); border-radius: var(--radius); transition: color .15s, border-color .15s, background .15s; }
+.lock-btn:hover, .lock-btn:active { border-color: var(--primary); }
+.lock-btn svg { width: 14px; height: 14px; stroke-width: 1.8; }
+.lock-btn .lock-icon-closed { display: none; }
+.lock-btn.locked { color: var(--accent); border-color: var(--accent); background: rgb(230 173 87 / .08); }
+.lock-btn.locked .lock-icon-open { display: none; }
+.lock-btn.locked .lock-icon-closed { display: block; }
+
+/* ---- shared panel ---- */
+.panel { border: 1px solid var(--border); background: var(--card); padding: 12px; overflow: hidden; }
+.panel-label { display: flex; justify-content: space-between; color: var(--primary); font-size: 9px; letter-spacing: .12em; }
+.eyebrow { margin: 0; color: var(--muted-foreground); font-size: 10px; letter-spacing: .1em; }
+.muted { color: var(--muted-foreground); }
+.amber { color: var(--accent) !important; }
+.bar { height: 5px; background: var(--secondary); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--primary); box-shadow: 0 0 10px rgb(130 245 155 / .35); transition: width .35s ease; }
+.bar i.warning-fill { background: var(--accent); box-shadow: 0 0 10px rgb(230 173 87 / .35); }
+
+/* ============== IDLE ============== */
+.idle-scene { display: grid; grid-template-columns: 1.7fr 1fr; grid-template-rows: 1fr auto auto; gap: 10px; }
+.clock-block { grid-row: 1 / 4; border: 1px solid var(--border); background: var(--card); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; padding: 24px 5vw; cursor: pointer; text-align: left; }
+.terminal-prompt { color: var(--primary); font-size: 10px; letter-spacing: .14em; }
+.clock { display: flex; align-items: flex-start; color: var(--foreground); font-size: clamp(76px, 15vw, 180px); font-weight: 700; line-height: .93; letter-spacing: -.1em; }
+.clock small { margin: 7% 0 0 12px; color: var(--primary); font-size: .16em; letter-spacing: 0; }
+.clock small.clock-tz { margin-left: 10px; color: var(--muted-foreground); font-size: .13em; letter-spacing: .08em; font-weight: 600; align-self: flex-start; }
+.date { color: var(--muted-foreground); margin-top: 12px; font-size: clamp(12px, 1.5vw, 18px); letter-spacing: .13em; }
+.clock-secondary { margin-top: 8px; display: flex; align-items: center; color: var(--muted-foreground); font-size: clamp(10px, 1.1vw, 14px); letter-spacing: .12em; }
+.clock-secondary i { display: inline-block; width: 5px; height: 5px; margin-right: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.double-tap { margin-top: 24px; color: var(--primary); font-size: 8px; opacity: .65; }
+.weather { display: flex; align-items: center; gap: 15px; }
+.weather > .weather-icon { font-size: 38px; color: var(--accent); }
+.weather > div { flex: 1; }
+.weather strong { display: block; margin-top: 2px; font-size: 34px; line-height: 1; color: var(--foreground); }
+.weather p { margin: 3px 0 0; color: var(--muted-foreground); font-size: 9px; line-height: 1.6; }
+.hilo { color: var(--muted-foreground); font-size: 9px; line-height: 1.5; }
+.idle-info { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.idle-info div { display: grid; gap: 4px; }
+.idle-info .i-ico { color: var(--primary); font-size: 18px; }
+.idle-info span { color: var(--muted-foreground); font-size: 8px; }
+.idle-info b { font-size: 9px; }
+.ambient-log { display: flex; flex-direction: column; gap: 4px; color: var(--muted-foreground); font-size: 8px; }
+.ambient-log .cursor { color: var(--primary); }
+.cursor-blink { animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ============== MUSIC ============== */
+/* #m-bg itself now lives at the dashboard-shell level (see "layout shell"
+   above) so it can extend behind the system bar too — this section only
+   needs to stay non-opaque so that background actually shows through. */
+.music-scene { display: grid; grid-template-columns: minmax(210px, 25%) 1fr; grid-template-rows: 1fr; gap: 10px; overflow: hidden; }
+/* Panels turn into "glass" over the ambient art instead of a flat opaque
+   card, so the cover actually shows through behind the track/lyrics text. */
+.music-scene .panel { background: rgb(24 29 24 / .32); backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); }
+/* Text shadow insurance: with the background this bright now, muted-color
+   lyric lines need a bit of their own contrast rather than relying only on
+   the panel's darkening. */
+.music-scene .lyrics-stack p { text-shadow: 0 1px 4px rgb(0 0 0 / .6); }
+.music-scene .track h2, .music-scene .eyebrow, .music-scene #m-state { text-shadow: 0 1px 3px rgb(0 0 0 / .5); }
+/* Per-track accent extracted from the album art (set by music.js). Falls back
+   to the brand green when no art / extraction fails (.has-accent absent). */
+.music-scene.has-accent #m-fill { background: var(--music-accent); box-shadow: 0 0 10px var(--music-accent); }
+.music-scene.has-accent .lyrics-stack p.active { color: var(--music-accent); text-shadow: 0 0 18px var(--music-accent), 0 1px 4px rgb(0 0 0 / .6); }
+.music-scene.has-accent .panel-label { color: var(--music-accent); }
+.music-scene.has-accent #m-state { color: var(--music-accent); }
+.side-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; height: 100%; }
+/* Album art is the one allowed to shrink (flex:1) on short/landscape phone
+   screens; the track panel below it is pinned to its natural content size
+   (flex: 0 0 auto) so the transport controls can never get squeezed out and
+   clipped by the panel's overflow:hidden — that was the actual cause of the
+   "bottom is cutting" report, not (only) a safe-area issue. */
+.album-wrap { display: flex; flex-direction: column; justify-content: center; gap: 8px; min-width: 0; flex: 1 1 auto; min-height: 0; }
+.album-art { position: relative; aspect-ratio: 1; max-height: 26vh; min-height: 0; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--border); background: var(--secondary); color: var(--primary); }
+.album-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; }
+.album-art .album-note { width: 32%; height: 32%; filter: drop-shadow(0 0 20px rgb(130 245 155 / .35)); z-index: 1; }
+.album-art .album-orbit { position: absolute; width: 76%; aspect-ratio: 1; border: 1px solid var(--primary); border-radius: 50%; box-shadow: inset 0 0 0 18px var(--card), inset 0 0 0 19px var(--border); animation: rotate 14s linear infinite; z-index: 2; pointer-events: none; }
+.album-art .album-orbit::after { content: ''; position: absolute; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); top: 8%; left: 18%; box-shadow: 0 0 12px var(--accent); }
+.album-art .album-brand { position: absolute; left: 12px; bottom: 10px; font-weight: 800; line-height: 1.05; letter-spacing: .12em; z-index: 2; color: var(--primary); text-shadow: 0 0 8px rgba(0,0,0,.6); font-size: 10px; }
+.album-art.has-art .album-note, .album-art.has-art .album-brand { display: none; }
+.album-art.has-art .album-orbit { display: none; }
+@keyframes rotate { to { transform: rotate(360deg); } }
+.source-line { color: var(--muted-foreground); font-size: 9px; display: flex; align-items: center; gap: 7px; }
+.source-line .src-ico { font-size: 12px; }
+.track { display: flex; flex-direction: column; gap: 10px; min-width: 0; flex: 0 0 auto; }
+/* Title + eyebrow: both support marquee (continuous loop) when their text
+   overflows the panel. The .marquee span is the clip; .marquee-content is
+   the inner flex track with two identical spans. JS toggles the .animating
+   class (which starts the keyframe) and sets --dur based on overflow width. */
+.track h2 { margin: 4px 0 0; font-size: clamp(18px, 2.2vw, 30px); line-height: 1.05; letter-spacing: -.02em; color: var(--foreground); overflow: hidden; }
+.track h2 .marquee { display: block; overflow: hidden; }
+.track h2 .marquee-content { display: inline-flex; will-change: transform; }
+.track h2 .marquee-content.animating { animation: marquee-scroll var(--dur, 12s) linear infinite; }
+.track h2 .track { padding-right: 2.2em; flex: 0 0 auto; }
+.track .eyebrow { overflow: hidden; }
+.track .eyebrow .marquee { display: block; overflow: hidden; }
+.track .eyebrow .marquee-content { display: inline-flex; will-change: transform; }
+.track .eyebrow .marquee-content.animating { animation: marquee-scroll var(--dur, 14s) linear infinite; }
+.track .eyebrow .track { padding-right: 2em; flex: 0 0 auto; }
+@keyframes marquee-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .track h2 .marquee-content.animating,
+  .track .eyebrow .marquee-content.animating { animation: none; }
+}
+.progress-meta { display: flex; justify-content: space-between; color: var(--muted-foreground); font-size: 10px; margin-top: 2px; }
+.track-bar { height: 6px; }
+.transport { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 4px 0 0; }
+.tbtn { width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid var(--border); color: var(--muted-foreground); transition: color .15s, border-color .15s, background .15s, transform .1s; }
+.tbtn:hover { color: var(--primary); border-color: var(--primary); }
+.tbtn:active { transform: scale(.94); }
+.tbtn.primary { width: 48px; height: 48px; color: var(--primary); border-color: var(--primary); background: rgb(130 245 155 / .08); }
+.tbtn.primary svg { font-size: 20px; }
+.tbtn[disabled] { opacity: .35; cursor: not-allowed; }
+.lyrics { display: flex; flex-direction: column; gap: 8px; min-width: 0; overflow: hidden; position: relative; }
+/* Lyrics stack: scrollable, hidden scrollbar (we provide touch-drag scrolling
+   for manual reading; the JS rAF loop re-centers the active line and pauses
+   that auto-centering for 5s whenever the user touches the list). */
+.lyrics-stack { flex: 1; overflow-y: auto; overflow-x: hidden; position: relative; padding: 12px 4px; -webkit-overflow-scrolling: touch; scrollbar-width: none; -ms-overflow-style: none; scroll-behavior: auto; }
+.lyrics-stack::-webkit-scrollbar { display: none; width: 0; height: 0; }
+/* Edge fade so lines scroll in and out softly instead of popping at the top
+   and bottom of the panel. */
+.lyrics-stack { -webkit-mask: linear-gradient(180deg, transparent 0, #000 14%, #000 86%, transparent 100%); mask: linear-gradient(180deg, transparent 0, #000 14%, #000 86%, transparent 100%); }
+/* All lines have a stable layout size — active emphasis is via GPU transform
+   (scale + glow), NOT font-size, so a long line never grows to 2 lines and
+   shoves the rest of the stack down. The transition is also shorter and
+   sharper than the previous ~.2s font-size growth. */
+.lyrics-stack p { margin: 0; line-height: 1.45; color: var(--muted-foreground); font-size: clamp(16px, 2vw, 24px); padding: .35em 0; transition: color .2s ease-out, opacity .2s ease-out, text-shadow .25s ease-out, transform .3s cubic-bezier(.2,.7,.2,1); transform-origin: left center; }
+.lyrics-stack p.active { color: var(--primary); font-weight: 700; text-shadow: 0 0 18px rgb(130 245 155 / .28); transform: scale(1.08); will-change: transform; }
+.lyrics-stack p.plain { color: var(--foreground); opacity: .9; white-space: pre-wrap; line-height: 1.6; padding: .35em 0; }
+.lyrics-stack p.none { color: var(--muted-foreground); font-style: italic; opacity: .55; font-size: 1.5vh; padding: 1em 0; text-align: center; }
+.lyrics-stack p.spacer { display: block; height: .6em; }
+
+/* ============== STATS ============== */
+.stats-scene { display: grid; grid-template-columns: 1.15fr 1fr; grid-template-rows: 78px 1fr 45px; gap: 10px; }
+.game-heading { grid-column: 1 / 3; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.game-heading h2 { margin: 2px 0 0; font-size: 25px; color: var(--foreground); letter-spacing: -.01em; }
+.fps { display: flex; align-items: baseline; gap: 6px; color: var(--primary); }
+.fps strong { font-size: 35px; line-height: 1; font-weight: 700; }
+.fps span { font-size: 10px; }
+.game-meta { display: flex; flex-direction: column; gap: 4px; font-size: 11px; align-items: flex-end; }
+.game-meta strong { color: var(--foreground); font-size: 13px; }
+.meters { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.meter { display: flex; flex-direction: column; justify-content: space-between; }
+.meter strong { font-size: clamp(30px, 5vw, 64px); line-height: 1; color: var(--primary); letter-spacing: -.08em; font-weight: 600; }
+.meter strong.amber { color: var(--accent); }
+.meter small { font-size: .25em; color: var(--muted-foreground); margin-left: 4px; font-weight: 400; }
+.meter.warning strong { color: var(--accent); }
+.telemetry { display: flex; flex-direction: column; justify-content: space-between; }
+.chart-row { min-height: 0; flex: 1; display: flex; align-items: center; gap: 10px; color: var(--muted-foreground); font-size: 9px; border-bottom: 1px solid var(--border); }
+.chart-row:last-child { border: 0; }
+.sparkline { flex: 1; height: 100%; stroke: var(--primary); stroke-width: 1.4; }
+.sparkline.warning { stroke: var(--accent); }
+.sparkline polyline { fill: none; }
+.stat-footer { grid-column: 1 / 3; display: flex; align-items: center; gap: 24px; padding-top: 6px; padding-bottom: 6px; color: var(--muted-foreground); font-size: 10px; }
+.stat-footer span { display: flex; align-items: center; gap: 8px; }
+.stat-footer b { color: var(--foreground); font-weight: 700; font-size: 13px; }
+.stat-footer .temp-chip b { color: var(--primary); }
+.stat-footer .temp-chip.hot b { color: var(--accent); }
+.stat-footer .temp-chip.missing b { color: var(--dimmer); font-weight: 400; font-size: 11px; }
+.f-ico { font-size: 13px; color: var(--primary); }
+.meter-card-hidden { display: none; }
+
+/* ============== DEV ============== */
+.dev-scene { display: grid; grid-template-columns: 1.1fr 1fr .9fr; grid-template-rows: 1fr 44px; gap: 10px; }
+.repo { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.repo > .repo-ico { font-size: 38px; color: var(--primary); }
+.repo h2 { margin: 4px 0; font-size: clamp(20px, 2.4vw, 33px); color: var(--foreground); letter-spacing: -.01em; word-break: break-word; }
+.path { color: var(--muted-foreground); font-size: 9px; word-break: break-all; }
+.branch { margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 10px; background: var(--secondary); color: var(--primary); font-size: 10px; }
+.branch .b-ico { font-size: 13px; }
+#d-pub { margin-left: auto; color: var(--muted-foreground); }
+.active-file { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.file-name { margin: 0; font-size: 17px; color: var(--foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.code-lines { flex: 1; display: flex; flex-direction: column; justify-content: space-around; }
+.code-lines i { display: block; height: 5px; background: var(--secondary); border-left: 24px solid var(--primary); }
+.code-lines i:nth-child(2), .code-lines i:nth-child(5) { width: 72%; border-left-color: var(--accent); }
+.code-lines i:nth-child(3) { width: 88%; }
+.code-lines i:nth-child(4) { width: 58%; }
+.editor-meta { display: flex; justify-content: space-between; color: var(--muted-foreground); font-size: 8px; }
+.changes { display: flex; flex-direction: column; min-width: 0; }
+.changes ul { margin: 10px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.changes li { display: flex; align-items: center; gap: 8px; padding: 7px; background: var(--secondary); font-size: 9px; color: var(--foreground); }
+.changes li b { color: var(--accent); }
+.changes li span { margin-left: auto; color: var(--primary); }
+.commit { grid-column: 1 / 4; display: flex; align-items: center; gap: 12px; padding-top: 6px; padding-bottom: 6px; color: var(--muted-foreground); font-size: 9px; }
+.commit p { margin: 0; color: var(--foreground); }
+.pulse-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--primary); animation: pulse 1.8s infinite; }
+@keyframes pulse { 50% { opacity: .2; box-shadow: 0 0 10px var(--primary); } }
+
+/* ============== FOCUS (Pomodoro) ============== */
+.focus-scene { display: grid; grid-template-columns: 1.5fr 1fr; grid-template-rows: 1fr; gap: 10px; }
+.focus-main { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; }
+.focus-main .panel-label { align-self: stretch; }
+.focus-ring-wrap { position: relative; height: min(46vh, 100%); aspect-ratio: 1; display: grid; place-items: center; }
+.focus-ring { width: 100%; height: 100%; transform: rotate(-90deg); }
+.focus-ring-bg { fill: none; stroke: var(--secondary); stroke-width: 4; }
+.focus-ring-fg { fill: none; stroke: var(--primary); stroke-width: 5; stroke-linecap: round; transition: stroke-dashoffset .3s linear, stroke .3s; filter: drop-shadow(0 0 6px rgb(130 245 155 / .4)); }
+.focus-scene.is-break .focus-ring-fg { stroke: var(--accent); filter: drop-shadow(0 0 6px rgb(230 173 87 / .4)); }
+.focus-time { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.focus-time span { font-size: clamp(40px, 8vw, 76px); font-weight: 700; letter-spacing: -.04em; line-height: 1; color: var(--foreground); font-variant-numeric: tabular-nums; }
+.focus-time small { color: var(--muted-foreground); font-size: 10px; letter-spacing: .2em; margin-top: 8px; }
+.focus-scene.is-break .focus-time small { color: var(--accent); }
+.focus-controls { display: flex; align-items: center; gap: 16px; }
+.focus-side { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.focus-cycles { display: flex; flex-direction: column; gap: 4px; }
+.focus-cycles strong { font-size: clamp(32px, 6vw, 54px); color: var(--primary); font-weight: 700; line-height: 1; letter-spacing: -.04em; }
+.focus-pips { display: flex; gap: 7px; margin: 6px 0 2px; }
+.focus-pips i { width: 12px; height: 12px; border: 1px solid var(--border); border-radius: 50%; display: block; }
+.focus-pips i.on { background: var(--primary); border-color: var(--primary); box-shadow: 0 0 8px var(--primary); }
+.focus-cycles small { color: var(--muted-foreground); font-size: 9px; }
+.focus-preset { display: flex; flex-direction: column; gap: 12px; }
+.preset-row { display: flex; align-items: center; gap: 10px; color: var(--muted-foreground); font-size: 10px; letter-spacing: .08em; }
+.preset-row > span:first-child { width: 46px; flex: 0 0 auto; }
+.preset-row b { color: var(--foreground); font-size: 20px; min-width: 2.5ch; text-align: center; font-variant-numeric: tabular-nums; }
+.preset-btn { width: 30px; height: 30px; flex: 0 0 auto; border: 1px solid var(--border); color: var(--primary); font-size: 18px; line-height: 1; display: grid; place-items: center; transition: background .12s, border-color .12s; }
+.preset-btn:hover { border-color: var(--primary); }
+.preset-btn:active { background: rgb(130 245 155 / .12); transform: scale(.94); }
+
+/* ============== CALENDAR (Agenda) ============== */
+.calendar-scene { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; gap: 10px; }
+.agenda-head { display: flex; flex-direction: column; justify-content: center; gap: 4px; }
+.agenda-countdown { margin: 0 0 2px; color: var(--primary); font-size: clamp(13px, 1.9vw, 20px); letter-spacing: .12em; font-weight: 700; }
+.agenda-head h2 { margin: 2px 0; font-size: clamp(22px, 3.2vw, 40px); color: var(--foreground); line-height: 1.08; letter-spacing: -.01em; }
+.agenda-when { margin: 4px 0 0; color: var(--foreground); font-size: clamp(11px, 1.4vw, 15px); }
+.agenda-loc { margin: 3px 0 0; color: var(--muted-foreground); font-size: 10px; opacity: .85; }
+.agenda-loc:empty { display: none; }
+.agenda-list { display: flex; flex-direction: column; min-height: 0; }
+.agenda-list ul { margin: 10px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; min-height: 0; scrollbar-width: none; }
+.agenda-list ul::-webkit-scrollbar { display: none; width: 0; }
+.agenda-list li { display: flex; align-items: baseline; gap: 10px; padding: 8px 10px; background: var(--secondary); font-size: 11px; }
+.agenda-list .ag-day { color: var(--primary); flex: 0 0 auto; width: 72px; font-size: 9px; letter-spacing: .05em; }
+.agenda-list .ag-time { color: var(--foreground); flex: 0 0 auto; width: 52px; font-variant-numeric: tabular-nums; }
+.agenda-list .ag-title { color: var(--foreground); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agenda-empty { color: var(--muted-foreground); font-style: italic; opacity: .6; background: transparent !important; padding-left: 0 !important; }
+
+/* ============== LAUNCHER ============== */
+.launcher-shell { position: fixed; inset: 0; z-index: 30; padding: max(12px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); display: flex; flex-direction: column; gap: 10px; background: var(--background); }
+.launcher-shell[hidden] { display: none; }
+.launcher-header { height: 38px; display: flex; justify-content: space-between; align-items: center; }
+.back-button { height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 14px; background: var(--card); border: 1px solid var(--border); cursor: pointer; font-size: 10px; color: var(--foreground); }
+.back-button .b-ico { font-size: 13px; }
+.launcher-status { display: flex; gap: 22px; color: var(--muted-foreground); font-size: 9px; }
+.launcher-status span { display: flex; align-items: center; gap: 6px; }
+.launcher-status .online { color: var(--primary); }
+.launcher-status #launcher-pc { color: var(--muted-foreground); }
+.launcher-content { min-height: 0; flex: 1; display: grid; grid-template-columns: .9fr 1.3fr; align-items: center; gap: 30px; border: 1px solid var(--border); background: var(--card); padding: 18px 4vw; }
+.brand-copy { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; }
+.brand-copy h1 { margin: 0; font-size: clamp(56px, 8vw, 108px); line-height: .9; letter-spacing: -.1em; color: var(--foreground); }
+.brand-copy h1 span { color: var(--primary); }
+.brand-copy h1 i { color: var(--primary); font-style: normal; animation: blink 1s steps(1) infinite; }
+.desk-scene { position: relative; height: 100%; min-height: 210px; overflow: hidden; }
+.wall-lines { position: absolute; inset: 0; background: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px); background-size: 28px 28px; opacity: .13; }
+.window { position: absolute; right: 4%; top: 4%; width: 23%; height: 38%; border: 4px solid var(--border); background: var(--background); }
+.window i { position: absolute; background: var(--border); }
+.window i:first-child { width: 3px; height: 100%; left: 50%; }
+.window i:nth-child(2) { height: 3px; width: 100%; top: 50%; }
+.moon { position: absolute; width: 20px; height: 20px; top: 15%; right: 15%; border-radius: 50%; background: var(--accent); box-shadow: 0 0 20px rgb(230 173 87 / .3); }
+.desk-top { position: absolute; left: 5%; right: 5%; bottom: 27%; height: 10px; background: var(--foreground); }
+.desk-leg { position: absolute; bottom: 0; width: 9px; height: 28%; background: var(--border); }
+.desk-leg.left { left: 10%; }
+.desk-leg.right { right: 10%; }
+.monitor { position: absolute; left: 32%; bottom: 30%; width: 35%; height: 53%; border: 6px solid var(--border); background: var(--background); z-index: 2; }
+.monitor-screen { height: 100%; padding: 10px; display: flex; flex-direction: column; gap: 7px; color: var(--muted-foreground); font-size: clamp(6px, .7vw, 9px); }
+.monitor-screen .green { color: var(--primary); }
+.monitor-screen .cursor { animation: blink 1s steps(1) infinite; color: var(--primary); }
+.monitor > i { position: absolute; left: 48%; top: 100%; width: 8px; height: 24px; background: var(--border); }
+.monitor > b { position: absolute; width: 38%; height: 5px; left: 31%; top: calc(100% + 22px); background: var(--border); }
+.lamp { position: absolute; left: 10%; bottom: 30%; width: 14%; height: 50%; }
+.lamp i { position: absolute; left: 50%; top: 22%; width: 5px; height: 75%; background: var(--border); transform: rotate(8deg); }
+.lamp b { position: absolute; top: 7%; left: 22%; width: 58%; height: 24%; background: var(--accent); clip-path: polygon(20% 0, 80% 0, 100% 100%, 0 100%); animation: lamp 3s ease-in-out infinite; }
+.plant { position: absolute; right: 14%; bottom: 30%; width: 13%; height: 38%; }
+.plant i { position: absolute; bottom: 28%; left: 44%; width: 18px; height: 48%; border-radius: 100% 0; background: var(--primary); transform-origin: bottom; animation: plant 4s ease-in-out infinite; }
+.plant i:nth-child(2) { transform: rotate(55deg); left: 50%; }
+.plant i:nth-child(3) { transform: rotate(-55deg); left: 25%; animation-delay: -.8s; }
+.plant b { position: absolute; bottom: 0; width: 100%; height: 30%; background: var(--border); clip-path: polygon(10% 0, 90% 0, 75% 100%, 25% 100%); }
+.mug { position: absolute; left: 71%; bottom: 30%; width: 23px; height: 29px; background: var(--foreground); z-index: 3; }
+.mug i { position: absolute; left: 100%; top: 6px; width: 10px; height: 14px; border: 3px solid var(--foreground); border-left: 0; border-radius: 0 50% 50% 0; }
+.cat { position: absolute; left: 15%; bottom: 5%; width: 110px; height: 65px; z-index: 3; animation: cat-breathe 2.8s ease-in-out infinite; }
+.cat-body { position: absolute; left: 28px; bottom: 0; width: 67px; height: 38px; border-radius: 48% 55% 20% 25%; background: var(--muted-foreground); }
+.cat-head { position: absolute; left: 8px; bottom: 7px; width: 48px; height: 42px; border-radius: 45%; background: var(--muted-foreground); }
+.cat-head i { position: absolute; top: -10px; width: 18px; height: 22px; background: var(--muted-foreground); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.cat-head i:nth-child(2) { right: 0; }
+.cat-head b, .cat-head span { position: absolute; top: 18px; width: 4px; height: 4px; border-radius: 50%; background: var(--primary); }
+.cat-head b { left: 13px; }
+.cat-head span { right: 13px; }
+.cat-tail { position: absolute; right: -12px; bottom: 7px; width: 42px; height: 15px; border: 8px solid var(--muted-foreground); border-left: 0; border-bottom: 0; border-radius: 0 100% 0 0; transform-origin: left bottom; animation: tail 2.2s ease-in-out infinite; }
+.floor-shadow { position: absolute; left: 8%; right: 8%; bottom: 1%; height: 10%; border-radius: 50%; background: rgb(0 0 0 / .25); }
+@keyframes cat-breathe { 50% { transform: translateY(2px) scaleY(.98); } }
+@keyframes tail { 50% { transform: rotate(-10deg); } }
+@keyframes plant { 50% { rotate: 2deg; } }
+@keyframes lamp { 50% { filter: brightness(1.2); } }
+.widget-grid { height: 76px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+.widget-grid button { min-width: 0; border: 1px solid var(--border); background: var(--card); display: flex; align-items: center; gap: 8px; padding: 8px 9px; text-align: left; cursor: pointer; transition: border-color .15s, background .15s; color: var(--foreground); }
+.widget-grid button:hover { border-color: var(--primary); background: var(--secondary); }
+.widget-icon { display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 auto; border: 1px solid var(--border); color: var(--primary); font-size: 15px; }
+.widget-grid button > span:nth-child(2) { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.widget-grid b { font-size: 9px; }
+.widget-grid small { color: var(--muted-foreground); font-size: 7px; white-space: nowrap; }
+.widget-grid button > i { margin-left: auto; color: var(--muted-foreground); font-size: 8px; font-style: normal; }
+
+/* portrait lockout */
+@media (orientation: portrait) {
+  body::before { content: 'ROTATE DEVICE / LANDSCAPE MODE REQUIRED'; position: fixed; inset: 0; display: grid; place-items: center; z-index: 99; padding: 30px; background: var(--background); color: var(--primary); text-align: center; font-size: 13px; letter-spacing: .1em; }
+  .dashboard-shell, .launcher-shell { opacity: 0; pointer-events: none; }
+}
+
+/* small landscape — keep it usable on the realme 3 (720h is tight) */
+@media (max-height: 720px) {
+  .clock { font-size: clamp(64px, 14vh, 160px); }
+  .lyrics-stack p { font-size: 16px; }
+  .lyrics-stack p.active { font-size: 26px; }
+  .meter strong { font-size: 38px; }
+  .repo h2 { font-size: 22px; }
+  .brand-copy h1 { font-size: clamp(48px, 9vh, 96px); }
+  .album-art { max-height: 20vh; }
+  .track { gap: 6px; }
+  .track.panel { padding: 8px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+}

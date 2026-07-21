@@ -1,0 +1,9 @@
+# Windows-only collectors. Install AFTER requirements.txt:
+#   python -m pip install -r requirements-windows.txt
+#
+# All three are import-guarded in the code, so Desko still runs without them --
+# the corresponding widgets just stay hidden.
+
+winsdk>=1.0.0b10   # Windows media session (now playing) -> Music scene
+wmi>=1.5.1         # reads LibreHardwareMonitor's WMI namespace -> temps/GPU
+pywin32>=306       # COM init (pythoncom) needed by wmi from a worker thread

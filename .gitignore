@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Desko runtime data
+# lyrics cache (regenerated on demand)
+cache/
+# user-specific; generated on first run (see config.example.json). May hold a
+# secret calendar .ics URL, so keep it out of the repo.
+config.json
+
+# Personal scratch notes
+bugs.txt
+
+# Experimental alternate frontend (not part of the shipping app)
+new ui/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

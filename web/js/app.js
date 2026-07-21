@@ -1,0 +1,394 @@
+// Desko frontend core — v0 design port (system bar + scene frame + scene rail + launcher).
+// Plain script (no modules) for old Chromium on the realme 3.
+window.Desko = (function () {
+  var SCENES = ["idle", "music", "stats", "dev", "focus", "calendar"];
+  var state = { scene: "idle", override: null, locked: false, info: null, media: null, lyrics: null, sys: null, weather: null, dev: null, game: null, focus: null, calendar: null };
+  var info = { hostname: "—", ip: "—" }; // from /api/info
+  var scenes = {};
+  var launcher = null;            // launcher module (optional)
+  var active = null;              // current scene name
+  var urlOverride = null;         // ?scene=...
+  var launcherOpen = false;       // UI flag
+  var ws = null;
+  var backoff = 1000;
+  var pingTimer = null;
+  var pingSent = 0;
+  var lastLinkMs = null;
+  var lastUptimeTick = 0;
+  var clockOffsetMs = 0;   // estimated (serverNow - clientNow), refreshed each pong
+
+  // --- DOM helpers ----------------------------------------------------------
+  function el(id) { return document.getElementById(id); }
+  function qs(sel, root) { return (root || document).querySelector(sel); }
+  function qsa(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
+
+  // --- WS send / scene routing ---------------------------------------------
+  function send(msg) { if (ws && ws.readyState === 1) { try { ws.send(JSON.stringify(msg)); } catch (e) {} } }
+
+  function applyScene(name, reason, overrideVal) {
+    if (typeof name !== "string") return;
+    state.scene = name;
+    if (typeof overrideVal !== "undefined") state.override = overrideVal;
+    var target = urlOverride || name;
+    if (target === active) {
+      // Scene unchanged, but the lock state may have just flipped — keep
+      // that indicator in sync even when the visible scene doesn't change.
+      syncLockIndicator();
+      if (scenes[active] && scenes[active].onStateChange) try { scenes[active].onStateChange(state); } catch (e) { console.error(e); }
+      return;
+    }
+    if (active && scenes[active] && scenes[active].onExit) { try { scenes[active].onExit(); } catch (e) {} }
+    qsa(".scene").forEach(function (n) { n.classList.remove("active"); });
+    var node = qs('[data-scene="' + target + '"]');
+    if (node) node.classList.add("active");
+    active = target;
+    syncLockIndicator();
+    if (scenes[target] && scenes[target].onEnter) {
+      try { scenes[target].onEnter(state); } catch (e) { console.error(e); }
+    }
+  }
+
+  // Lock indicator lives in the top system bar (id="lock-btn") so it's always
+  // visible — icon-only (open/closed padlock), no text. See desko/context.py
+  // for what locking actually does server-side.
+  function syncLockIndicator() {
+    var btn = el("lock-btn");
+    if (btn) btn.classList.toggle("locked", !!state.locked);
+  }
+
+  function mergeUpdate(section, data) {
+    if (data === null) {
+      state[section] = null;
+    } else if (typeof data === "object" && state[section] && typeof state[section] === "object") {
+      state[section] = Object.assign({}, state[section], data);
+    } else {
+      state[section] = data;
+    }
+    if (section === "info") { info.hostname = state.info.hostname || "—"; info.ip = state.info.ip || "—"; renderSysBar(); }
+    if (section === "locked") { syncLockIndicator(); }
+    if (section === "media" || section === "lyrics") {
+      if (scenes.music && scenes.music.onStateChange) try { scenes.music.onStateChange(state); } catch (e) {}
+    } else if (section === "sys" || section === "game") {
+      if (scenes.stats && scenes.stats.onStateChange) try { scenes.stats.onStateChange(state); } catch (e) {}
+    } else if (section === "weather") {
+      if (scenes.idle && scenes.idle.onStateChange) try { scenes.idle.onStateChange(state); } catch (e) {}
+    } else if (section === "dev") {
+      if (scenes.dev && scenes.dev.onStateChange) try { scenes.dev.onStateChange(state); } catch (e) {}
+    } else {
+      if (active && scenes[active] && scenes[active].onStateChange) try { scenes[active].onStateChange(state); } catch (e) {}
+    }
+  }
+
+  function handle(msg) {
+    if (msg.type === "snapshot") {
+      var d = msg.data || {};
+      for (var k in d) if (Object.prototype.hasOwnProperty.call(d, k)) state[k] = d[k];
+      if (state.info) { info.hostname = state.info.hostname || "—"; info.ip = state.info.ip || "—"; }
+      renderSysBar();
+      syncLockIndicator();
+      applyScene(state.scene, "auto", state.override);
+      // ping all scenes once on snapshot so initial UI is correct
+      Object.keys(scenes).forEach(function (n) {
+        if (n === active && scenes[n].onStateChange) { try { scenes[n].onStateChange(state); } catch (e) {} }
+      });
+    } else if (msg.type === "update") {
+      mergeUpdate(msg.section, msg.data);
+    } else if (msg.type === "scene") {
+      applyScene(msg.scene, msg.reason, msg.override);
+    } else if (msg.type === "pong") {
+      if (typeof msg.t === "number") {
+        var nowMs = Date.now();
+        lastLinkMs = nowMs - msg.t;
+        renderLink();
+        // Estimate client/server clock offset from the round trip (assumes
+        // symmetric latency): serverNow ~= msg.st + rtt/2. Used by music.js
+        // to keep the lyrics/progress interpolation correct even when the
+        // phone's system clock doesn't match the PC's.
+        if (typeof msg.st === "number" && lastLinkMs >= 0) {
+          var serverNowMs = msg.st * 1000 + lastLinkMs / 2;
+          clockOffsetMs = serverNowMs - nowMs;
+        }
+      }
+    }
+  }
+
+  // --- WebSocket ------------------------------------------------------------
+  function connect() {
+    var proto = location.protocol === "https:" ? "wss:" : "ws:";
+    var url = proto + "//" + location.host + "/ws";
+    try { ws = new WebSocket(url); } catch (e) { scheduleReconnect(); return; }
+    ws.onopen = function () {
+      backoff = 1000;
+      document.body.parentElement && document.body.parentElement.classList.remove("offline");
+      var shell = qs(".dashboard-shell"); if (shell) shell.classList.remove("offline");
+      var t = el("sb-link-text"); if (t) t.textContent = "LINKED";
+      startPing();
+    };
+    ws.onmessage = function (ev) { try { handle(JSON.parse(ev.data)); } catch (e) {} };
+    ws.onclose = function () { onDisconnect(); scheduleReconnect(); };
+    ws.onerror = function () { try { ws.close(); } catch (e) {} };
+  }
+  function onDisconnect() {
+    document.body.parentElement && document.body.parentElement.classList.add("offline");
+    var shell = qs(".dashboard-shell"); if (shell) shell.classList.add("offline");
+    var t = el("sb-link-text"); if (t) t.textContent = "OFFLINE";
+    if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+  }
+  function scheduleReconnect() { setTimeout(connect, backoff); backoff = Math.min(backoff * 1.7, 5000); }
+
+  // --- Latency ping ---------------------------------------------------------
+  function startPing() {
+    if (pingTimer) clearInterval(pingTimer);
+    pingSent = Date.now();
+    send({ type: "ping", t: pingSent });
+    pingTimer = setInterval(function () {
+      pingSent = Date.now();
+      send({ type: "ping", t: pingSent });
+    }, 5000);
+  }
+  function renderLink() {
+    var e = el("i-link"); if (!e) return;
+    e.textContent = (lastLinkMs == null ? "—" : Math.max(1, Math.round(lastLinkMs))) + "ms";
+  }
+
+  // --- /api/info (hostname, ip, uptime) ------------------------------------
+  function fetchInfo() {
+    fetch("/api/info", { headers: { "Accept": "application/json" } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        if (!j) return;
+        info.hostname = j.hostname || "—";
+        info.ip = j.ip || "—";
+        renderSysBar();
+      })
+      .catch(function () {});
+  }
+  function fmtUptime(s) {
+    s = Math.max(0, Math.floor(s || 0));
+    var h = Math.floor(s / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    var sec = s % 60;
+    var pad = function (n) { return n < 10 ? "0" + n : "" + n; };
+    return pad(h) + ":" + pad(m) + ":" + pad(sec);
+  }
+  function renderSysBar() {
+    var h = el("sb-hostname"); if (h) h.textContent = (info.hostname || "—").toUpperCase();
+    var i = el("sb-ip"); if (i) i.textContent = info.ip || "—";
+    var clk = el("sb-clock"); if (clk) clk.textContent = hhmmNow();
+    var u = el("i-uptime"); if (u) u.textContent = fmtUptime((Date.now() - bootStart) / 1000);
+  }
+  function hhmmNow() {
+    var d = new Date();
+    var hh = String(d.getHours()).padStart(2, "0");
+    var mm = String(d.getMinutes()).padStart(2, "0");
+    return hh + ":" + mm;
+  }
+  var bootStart = Date.now();
+
+  // --- Phone battery (Battery Status API) ----------------------------------
+  // Real battery for the device the dashboard runs on (the phone), shown in the
+  // system bar and on the idle scene's DEVICE row. The API is unavailable on
+  // some browsers (notably desktop Firefox); we degrade to "—" there.
+  var battery = { level: null, charging: null, supported: false };
+  function renderBattery() {
+    var fill = el("sb-batt-fill");
+    var pct = el("sb-batt-pct");
+    var bolt = el("sb-batt-bolt");
+    var wrap = el("sb-batt");
+    var dev = el("i-device");
+    if (!battery.supported || battery.level == null) {
+      if (pct) pct.textContent = "—";
+      if (fill) fill.setAttribute("width", "0");
+      if (bolt) bolt.style.display = "none";
+      if (dev) dev.textContent = "—";
+      if (wrap) wrap.classList.remove("batt-low");
+      return;
+    }
+    var lvl = Math.max(0, Math.min(1, battery.level));
+    var low = lvl <= 0.2 && !battery.charging;
+    if (fill) { fill.setAttribute("width", (14 * lvl).toFixed(2)); }
+    if (pct) pct.textContent = Math.round(lvl * 100) + "%";
+    if (bolt) bolt.style.display = battery.charging ? "" : "none";
+    if (wrap) wrap.classList.toggle("batt-low", low);
+    if (dev) dev.textContent = Math.round(lvl * 100) + "%" + (battery.charging ? " CHRG" : "");
+  }
+  function initBattery() {
+    if (!navigator.getBattery) { renderBattery(); return; }
+    navigator.getBattery().then(function (b) {
+      battery.supported = true;
+      var sync = function () { battery.level = b.level; battery.charging = b.charging; renderBattery(); };
+      b.addEventListener("levelchange", sync);
+      b.addEventListener("chargingchange", sync);
+      sync();
+    }).catch(function () { renderBattery(); });
+  }
+
+  // --- Keep-awake (NoSleep shim) -------------------------------------------
+  var noSleep = null;
+  function enableNoSleep() {
+    if (!noSleep) noSleep = new NoSleep();
+    try { noSleep.enable(); } catch (e) {}
+    document.removeEventListener("touchend", enableNoSleep);
+    document.removeEventListener("click", enableNoSleep);
+  }
+
+  // --- Fullscreen toggle ----------------------------------------------------
+  function toggleFullscreen() {
+    var d = document, root = d.documentElement;
+    var isFs = d.fullscreenElement || d.webkitFullscreenElement;
+    if (isFs) { (d.exitFullscreen || d.webkitExitFullscreen || function () {}).call(d); }
+    else {
+      var req = root.requestFullscreen || root.webkitRequestFullscreen;
+      if (req) { try { var p = req.call(root); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
+    }
+  }
+  function syncFsState() {
+    var fs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    document.body.classList.toggle("is-fs", fs);
+  }
+  document.addEventListener("fullscreenchange", syncFsState);
+  document.addEventListener("webkitfullscreenchange", syncFsState);
+
+  // --- Gestures (swipe, double-tap) ---------------------------------------
+  var touchStartX = null, touchStartY = null, lastTap = 0;
+  function onTouchStart(e) {
+    var t = e.changedTouches[0];
+    touchStartX = t.clientX; touchStartY = t.clientY;
+  }
+  function onTouchEnd(e) {
+    if (touchStartX == null) return;
+    var t = e.changedTouches[0];
+    var dx = t.clientX - touchStartX, dy = t.clientY - touchStartY;
+    if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      send({ type: "cycle", dir: dx > 0 ? -1 : 1 });
+      touchStartX = null; return;
+    }
+    if (Math.abs(dx) < 14 && Math.abs(dy) < 14) {
+      var now = Date.now();
+      if (now - lastTap < 320) { lastTap = 0; onDoubleTapAnywhere(); }
+      else { lastTap = now; }
+    }
+    touchStartX = null;
+  }
+  function onDoubleTapAnywhere() {
+    // Default: open launcher when on idle. The idle scene's clock-button also
+    // opens launcher, so this is a global convenience.
+    if (scenes.idle && typeof scenes.idle.onDoubleTap === "function") {
+      try { scenes.idle.onDoubleTap(); } catch (e) { console.error(e); }
+    }
+  }
+
+  // --- Global ticker (4x/s) -------------------------------------------------
+  function tick() {
+    if (launcherOpen) { renderLauncherTick(); return; }
+    if (active && scenes[active] && scenes[active].onTick) {
+      try { scenes[active].onTick(state, Date.now()); } catch (e) {}
+    }
+    var now = Date.now();
+    if (now - lastUptimeTick > 1000) {
+      lastUptimeTick = now;
+      var u = el("i-uptime"); if (u) u.textContent = fmtUptime((now - bootStart) / 1000);
+      var clk = el("sb-clock"); if (clk) clk.textContent = hhmmNow();
+    }
+  }
+  function renderLauncherTick() {
+    if (launcher && launcher.onTick) { try { launcher.onTick(Date.now()); } catch (e) {} }
+  }
+
+  // --- Nav controls (lock button, launcher widget buttons, back) -----------
+  function wireNav() {
+    var lockBtn = el("lock-btn");
+    if (lockBtn) {
+      lockBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        send({ type: "lock", locked: !state.locked });
+      });
+      // Stop bubbling so a quick tap here can't also register as part of the
+      // document-level double-tap-anywhere gesture (same pattern as fs-btn).
+      lockBtn.addEventListener("touchend", function (e) { e.stopPropagation(); }, { passive: true });
+    }
+    qsa(".widget-btn").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var s = b.dataset.scene;
+        if (s) { send({ type: "override", scene: s }); closeLauncher(); }
+      });
+    });
+    var back = el("launcher-back");
+    if (back) back.addEventListener("click", closeLauncher);
+  }
+
+  // --- Public launcher controls (used by idle scene's double-tap) ----------
+  function openLauncher() {
+    var l = el("launcher"); if (!l) return;
+    launcherOpen = true;
+    l.hidden = false;
+    if (launcher && launcher.onEnter) { try { launcher.onEnter(state); } catch (e) {} }
+  }
+  function closeLauncher() {
+    var l = el("launcher"); if (!l) return;
+    launcherOpen = false;
+    l.hidden = true;
+    if (launcher && launcher.onExit) { try { launcher.onExit(); } catch (e) {} }
+  }
+  function isLauncherOpen() { return launcherOpen; }
+
+  // --- Init -----------------------------------------------------------------
+  function init() {
+    // ?scene= override, ?launcher=1 to open the home screen on load
+    var p = new URLSearchParams(location.search);
+    var s = p.get("scene");
+    if (s && SCENES.indexOf(s) >= 0) urlOverride = s;
+    if (p.get("launcher") === "1") launcherOpen = true;
+
+    // System bar
+    renderSysBar();
+    setInterval(renderSysBar, 1000);
+
+    // Gestures + keep-awake
+    document.addEventListener("touchstart", onTouchStart, { passive: true });
+    document.addEventListener("touchend", onTouchEnd, { passive: true });
+    document.addEventListener("touchend", enableNoSleep, { once: true });
+    document.addEventListener("click", enableNoSleep, { once: true });
+
+    // Fullscreen: bind a small hotkey "f" for desktop dev; phone uses the
+    // fs-btn in the system bar / touch.
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "f" || e.key === "F") toggleFullscreen();
+    });
+
+    wireNav();
+    // Fullscreen button (system bar, top-left)
+    var fsBtn = el("fs-btn");
+    if (fsBtn) {
+      fsBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        enableNoSleep();
+        toggleFullscreen();
+      });
+      fsBtn.addEventListener("touchend", function (e) { e.stopPropagation(); }, { passive: true });
+    }
+    if (launcherOpen) {
+      var l = el("launcher");
+      if (l) l.hidden = false;
+      if (launcher && launcher.onEnter) { try { launcher.onEnter(state); } catch (e) {} }
+    }
+    initBattery();
+    fetchInfo();
+    setInterval(fetchInfo, 30000);
+    connect();
+    setInterval(tick, 250);
+  }
+
+  return {
+    init: init,
+    send: send,
+    state: state,
+    info: info,
+    scenes: scenes,
+    toggleFullscreen: toggleFullscreen,
+    openLauncher: openLauncher,
+    closeLauncher: closeLauncher,
+    isLauncherOpen: isLauncherOpen,
+    getClockOffsetMs: function () { return clockOffsetMs; },
+  };
+})();

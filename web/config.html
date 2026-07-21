@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111511">
+  <title>Desko · Settings</title>
+  <style>
+    :root {
+      --background:#111511; --foreground:#d9e1d7; --card:#181d18; --primary:#82f59b;
+      --secondary:#252c26; --muted-foreground:#7f8d80; --accent:#e6ad57; --border:#354238;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--background); color:var(--foreground); min-height:100dvh;
+      font-family:ui-monospace,"Cascadia Code",Consolas,"Courier New",monospace;
+      -webkit-font-smoothing:antialiased; padding:max(16px,env(safe-area-inset-top)) 16px 40px; }
+    .wrap { max-width:640px; margin:0 auto; }
+    header { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin:8px 0 22px; }
+    h1 { font-size:20px; letter-spacing:-.01em; margin:0; color:var(--primary); font-weight:800; }
+    h1 small { color:var(--muted-foreground); font-size:10px; font-weight:500; margin-left:8px; letter-spacing:.08em; }
+    a.back { color:var(--muted-foreground); font-size:12px; text-decoration:none; border:1px solid var(--border); padding:7px 12px; }
+    a.back:hover { border-color:var(--primary); color:var(--primary); }
+    .field { border:1px solid var(--border); background:var(--card); padding:14px; margin-bottom:12px; }
+    .field label { display:block; color:var(--primary); font-size:11px; letter-spacing:.1em; margin-bottom:4px; }
+    .field p { margin:0 0 10px; color:var(--muted-foreground); font-size:11px; line-height:1.5; }
+    input, textarea { width:100%; background:var(--secondary); color:var(--foreground); border:1px solid var(--border);
+      padding:10px; font:inherit; font-size:14px; }
+    input:focus, textarea:focus { outline:none; border-color:var(--primary); }
+    textarea { resize:vertical; min-height:70px; }
+    .row { display:flex; gap:12px; }
+    .row .field { flex:1; }
+    .restart-note { color:var(--accent); font-size:10px; letter-spacing:.06em; margin-top:8px; display:none; }
+    .actions { display:flex; align-items:center; gap:14px; margin-top:18px; }
+    button { background:var(--primary); color:#0a0f0a; border:0; padding:12px 22px; font:inherit; font-weight:700;
+      font-size:14px; cursor:pointer; letter-spacing:.04em; }
+    button:active { transform:scale(.98); }
+    #status { font-size:12px; color:var(--muted-foreground); }
+    #status.ok { color:var(--primary); } #status.err { color:var(--accent); }
+    .hint { color:var(--muted-foreground); font-size:10px; margin-top:2px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>DESKO <small>SETTINGS</small></h1>
+      <a class="back" href="/">← DASHBOARD</a>
+    </header>
+
+    <div class="field">
+      <label for="weather_city">WEATHER CITY</label>
+      <p>City for the idle-scene weather, e.g. <em>Pune, IN</em>. Leave blank to auto-detect by IP.</p>
+      <input id="weather_city" type="text" placeholder="auto-detect">
+      <div class="restart-note" data-for="weather_city">↻ restart Desko to apply</div>
+    </div>
+
+    <div class="field">
+      <label for="game_processes">GAME PROCESSES</label>
+      <p>Lowercase <em>.exe</em> names, one per line. When one is running, the Stats scene auto-shows. Applies live.</p>
+      <textarea id="game_processes" placeholder="valorant-win64-shipping.exe&#10;cs2.exe"></textarea>
+    </div>
+
+    <div class="field">
+      <label for="calendar_ics_urls">CALENDAR .ICS LINKS</label>
+      <p>One iCal URL per line (Google Calendar's "Secret address in iCal format", Outlook published calendar, ...). Powers the Agenda scene.</p>
+      <textarea id="calendar_ics_urls" placeholder="https://calendar.google.com/calendar/ical/.../basic.ics"></textarea>
+      <div class="restart-note" data-for="calendar_ics_urls">↻ restart Desko to apply</div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="focus_work_min">FOCUS · WORK (min)</label>
+        <input id="focus_work_min" type="number" min="1" max="180" value="25">
+        <div class="restart-note" data-for="focus_work_min">↻ restart to change the default</div>
+      </div>
+      <div class="field">
+        <label for="focus_break_min">FOCUS · BREAK (min)</label>
+        <input id="focus_break_min" type="number" min="1" max="60" value="5">
+        <div class="restart-note" data-for="focus_break_min">↻ restart to change the default</div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="port">SERVER PORT</label>
+      <p>TCP port Desko serves on. Changing it needs a restart (and a new URL on the phone).</p>
+      <input id="port" type="number" min="1" max="65535" value="7777">
+      <div class="restart-note" data-for="port">↻ restart Desko to apply</div>
+    </div>
+
+    <div class="actions">
+      <button id="save" type="button">SAVE</button>
+      <span id="status"></span>
+    </div>
+  </div>
+
+  <script>
+    var LIST_FIELDS = ["game_processes", "calendar_ics_urls"];
+    var NUM_FIELDS = ["focus_work_min", "focus_break_min", "port"];
+
+    function load() {
+      fetch("/api/config").then(function (r) { return r.json(); }).then(function (c) {
+        document.getElementById("weather_city").value = c.weather_city || "";
+        document.getElementById("game_processes").value = (c.game_processes || []).join("\n");
+        document.getElementById("calendar_ics_urls").value = (c.calendar_ics_urls || []).join("\n");
+        document.getElementById("focus_work_min").value = c.focus_work_min != null ? c.focus_work_min : 25;
+        document.getElementById("focus_break_min").value = c.focus_break_min != null ? c.focus_break_min : 5;
+        document.getElementById("port").value = c.port != null ? c.port : 7777;
+      }).catch(function () { setStatus("could not load current settings", "err"); });
+    }
+
+    function setStatus(msg, kind) {
+      var s = document.getElementById("status");
+      s.textContent = msg; s.className = kind || "";
+    }
+    function showRestart(keys) {
+      document.querySelectorAll(".restart-note").forEach(function (n) {
+        n.style.display = keys.indexOf(n.dataset.for) >= 0 ? "block" : "none";
+      });
+    }
+
+    function save() {
+      var body = { weather_city: document.getElementById("weather_city").value.trim() };
+      LIST_FIELDS.forEach(function (k) {
+        body[k] = document.getElementById(k).value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
+      });
+      NUM_FIELDS.forEach(function (k) {
+        var v = parseInt(document.getElementById(k).value, 10);
+        if (!isNaN(v)) body[k] = v;
+      });
+      setStatus("saving…");
+      fetch("/api/config", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      }).then(function (r) { return r.json(); }).then(function (res) {
+        if (res.error) { setStatus(res.error, "err"); return; }
+        var restart = res.restartRequired || [];
+        showRestart(restart);
+        if (!res.changed || !res.changed.length) setStatus("no changes", "ok");
+        else if (restart.length) setStatus("saved · restart Desko to apply " + restart.join(", "), "ok");
+        else setStatus("saved · applied live", "ok");
+      }).catch(function () { setStatus("save failed", "err"); });
+    }
+
+    document.getElementById("save").addEventListener("click", save);
+    load();
+  </script>
+</body>
+</html>

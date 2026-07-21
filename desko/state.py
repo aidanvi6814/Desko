@@ -1,0 +1,165 @@
+"""Central in-memory state with diffing and WebSocket pub/sub.
+
+Implements the §4 wire protocol: a single State object holds all sections;
+set_section deep-compares and broadcasts an ``update`` message only on change;
+set_scene broadcasts a ``scene`` message. New ws clients receive a ``snapshot``.
+"""
+import asyncio
+import json
+import logging
+import queue
+import socket
+import time
+from typing import Any, Optional
+
+log = logging.getLogger("desko.state")
+
+SCENES = ("idle", "music", "stats", "dev", "focus", "calendar")
+
+
+def _detect_ip() -> str:
+    """Return the best-guess LAN IPv4 (UDP-connect trick, no packets sent)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except OSError:
+        return "127.0.0.1"
+
+
+class State:
+    def __init__(self) -> None:
+        import platform
+        self._data = {
+            "scene": "idle",
+            "override": None,
+            "locked": False,
+            "media": None,
+            "lyrics": None,
+            "sys": None,
+            "weather": None,
+            "dev": None,
+            "focus": None,
+            "calendar": None,
+            "info": {
+                "hostname": platform.node() or "desko",
+                "ip": _detect_ip(),
+                "startedAt": time.time(),
+            },
+            "game": None,
+        }
+        self._subs: set = set()
+        # Thread-safe queue for commands the media thread should execute
+        # (e.g. play/pause/next/prev). The HTTP handler pushes; the media
+        # thread pops on its own event loop.
+        self.media_commands: "queue.Queue[str]" = queue.Queue()
+
+    # --- accessors ---------------------------------------------------------
+    def snapshot(self) -> dict:
+        return json.loads(json.dumps(self._data))
+
+    def get(self, section: Optional[str] = None) -> Any:
+        return self._data if section is None else self._data.get(section)
+
+    # --- mutations ---------------------------------------------------------
+    def set_section(self, name: str, data: Any) -> bool:
+        """Set a data section; broadcast ``update`` only if it actually changed."""
+        if self._data.get(name) == data:
+            return False
+        self._data[name] = data
+        asyncio.ensure_future(self._broadcast({"type": "update", "section": name, "data": data}))
+        return True
+
+    def patch_section(self, name: str, partial: Any) -> bool:
+        """Merge a partial update into an existing dict section and broadcast only
+        the partial. Used for high-frequency, small changes (e.g. media position
+        every second) so large fields like album art aren't re-sent each tick.
+        Falls back to set_section when the section isn't a dict. The client also
+        merges partials, so omitted fields (art) are preserved on both sides.
+        """
+        cur = self._data.get(name)
+        if isinstance(cur, dict) and isinstance(partial, dict):
+            changed = False
+            for k, v in partial.items():
+                if cur.get(k) != v:
+                    cur[k] = v
+                    changed = True
+            if changed:
+                asyncio.ensure_future(
+                    self._broadcast({"type": "update", "section": name, "data": partial})
+                )
+            return changed
+        return self.set_section(name, partial)
+
+    def set_scene(self, scene: str, reason: str = "auto", override: Any = None) -> bool:
+        """Update scene + override and broadcast a ``scene`` message."""
+        scene_changed = self._data.get("scene") != scene
+        self._data["scene"] = scene
+        self._data["override"] = override
+        asyncio.ensure_future(
+            self._broadcast({"type": "scene", "scene": scene, "reason": reason, "override": override})
+        )
+        return scene_changed
+
+    def set_override(self, scene: Optional[str], timeout_sec: float) -> None:
+        """Manual override (scene name) or resume auto (None)."""
+        if scene is None:
+            self._data["override"] = None
+            # context engine will re-evaluate; for now broadcast clearing override
+            asyncio.ensure_future(
+                self._broadcast({"type": "scene", "scene": self._data["scene"], "reason": "auto", "override": None})
+            )
+            return
+        self.set_scene(scene, reason="manual", override=scene)
+
+    def cycle_scene(self, direction: int) -> str:
+        """Move to the next/prev scene in SCENES order; implies manual override."""
+        current = self._data.get("scene", "idle")
+        try:
+            idx = SCENES.index(current)
+        except ValueError:
+            idx = SCENES.index("idle")
+        new = SCENES[(idx + direction) % len(SCENES)]
+        self.set_scene(new, reason="manual", override=new)
+        return new
+
+    def request_media_command(self, action: str) -> None:
+        """Enqueue a media transport action for the dedicated media thread.
+
+        action ∈ {"play_pause", "next", "prev"}. Returns immediately.
+        """
+        if action not in ("play_pause", "next", "prev"):
+            return
+        try:
+            self.media_commands.put_nowait(action)
+        except Exception:
+            pass
+
+    def uptime_sec(self) -> float:
+        """Seconds since the server started (from state.info.startedAt)."""
+        return time.time() - float(self._data.get("info", {}).get("startedAt", time.time()))
+
+    # --- pub/sub -----------------------------------------------------------
+    async def subscribe(self, ws) -> None:
+        self._subs.add(ws)
+        try:
+            await ws.send_json({"type": "snapshot", "data": self.snapshot()})
+        except Exception:
+            self._subs.discard(ws)
+
+    def unsubscribe(self, ws) -> None:
+        self._subs.discard(ws)
+
+    async def _broadcast(self, msg: dict) -> None:
+        if not self._subs:
+            return
+        dead = []
+        for ws in list(self._subs):
+            try:
+                await ws.send_json(msg)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self._subs.discard(ws)
