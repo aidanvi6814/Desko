@@ -20,7 +20,6 @@ from aiohttp import web
 
 from . import context as context_mod
 from . import focus as focus_mod
-from .collectors import calendar_ics as calendar_mod
 from .collectors import lyrics as lyrics_mod
 from .collectors import media as media_mod
 from .collectors import sysstats as sysstats_mod
@@ -79,7 +78,6 @@ async def config_page(request: web.Request) -> web.Response:
 _CONFIG_FIELDS = {
     "weather_city": (str, True),
     "game_processes": (list, False),
-    "calendar_ics_urls": (list, True),
     "focus_work_min": (int, True),
     "focus_break_min": (int, True),
     "port": (int, True),
@@ -253,7 +251,6 @@ async def on_startup(app: web.Application) -> None:
         tasks.append(asyncio.create_task(media_mod.start(state, config, app["http_session"])))
         tasks.append(asyncio.create_task(lyrics_mod.start(state, config, app["http_session"])))
         tasks.append(asyncio.create_task(sysstats_mod.start(state, config, app["http_session"])))
-        tasks.append(asyncio.create_task(calendar_mod.start(state, config, app["http_session"])))
         # Focus (Pomodoro) timer — server-authoritative state + auto phase flow.
         tasks.append(asyncio.create_task(focus_mod.start(state, config)))
         # Context engine drives auto scene switching (fully wired in M5).

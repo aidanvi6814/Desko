@@ -236,7 +236,7 @@ async def _poll_loop(state, config, session, main_loop, stop: threading.Event) -
     last_playing = None
     last_pos_pub: float | None = None
     no_session_since = None
-    lyrics_in_flight = None
+    last_lyrics_key = None   # trackKey we last kicked a lyrics fetch for
     errored = False
     # Monotonic deadline while we keep ignoring the art cache and re-reading
     # the thumbnail on every tick. Set to "now + ART_SETTLE_SEC" on every
@@ -297,8 +297,15 @@ async def _poll_loop(state, config, session, main_loop, stop: threading.Event) -
                 last_pos_pub = media["positionSec"]
                 pub = {k: v for k, v in media.items() if k != "trackKey"}
                 publish(state.set_section, "media", pub)
-                if lyrics_in_flight is None or lyrics_in_flight.done():
-                    lyrics_in_flight = asyncio.run_coroutine_threadsafe(
+                # Request lyrics once per new track. Gating on the trackKey (not
+                # on a single in-flight future) means a new track always gets
+                # its own fetch even if a previous, slower fetch is still
+                # running -- that gap is what left the *old* song's lyrics
+                # showing. Overlap is safe: lyrics.fetch only publishes if the
+                # current media still matches the track it fetched.
+                if track_key != last_lyrics_key:
+                    last_lyrics_key = track_key
+                    asyncio.run_coroutine_threadsafe(
                         lyrics_mod.fetch(
                             state, session, track_key,
                             media["artist"], media["title"], media["album"], media["durationSec"],
@@ -356,8 +363,9 @@ async def _poll_loop(state, config, session, main_loop, stop: threading.Event) -
                             last_pos_pub = media2["positionSec"]
                             pub2 = {k: v for k, v in media2.items() if k != "trackKey"}
                             publish(state.set_section, "media", pub2)
-                            if lyrics_in_flight is None or lyrics_in_flight.done():
-                                lyrics_in_flight = asyncio.run_coroutine_threadsafe(
+                            if tk2 != last_lyrics_key:
+                                last_lyrics_key = tk2
+                                asyncio.run_coroutine_threadsafe(
                                     lyrics_mod.fetch(
                                         state, session, tk2,
                                         media2["artist"], media2["title"], media2["album"],

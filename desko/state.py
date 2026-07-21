@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 log = logging.getLogger("desko.state")
 
-SCENES = ("idle", "music", "stats", "dev", "focus", "calendar")
+SCENES = ("idle", "music", "stats", "dev", "focus")
 
 
 def _detect_ip() -> str:
@@ -42,7 +42,6 @@ class State:
             "weather": None,
             "dev": None,
             "focus": None,
-            "calendar": None,
             "info": {
                 "hostname": platform.node() or "desko",
                 "ip": _detect_ip(),

@@ -4,11 +4,6 @@ aiohttp>=3.9
 psutil>=5.9
 qrcode>=7.4
 
-# Timezone database for the Agenda scene. Pure data, cross-platform; lets
-# TZID-based .ics events resolve correctly (Windows ships no system zoneinfo).
-# Harmless to keep even if you never use calendars.
-tzdata>=2024.1
-
 # ---------------------------------------------------------------------------
 # Windows-only extras (media "now playing" + CPU/GPU temps) live in
 # requirements-windows.txt. They're import-guarded, so Desko runs fine without

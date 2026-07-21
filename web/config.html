@@ -59,13 +59,6 @@
       <textarea id="game_processes" placeholder="valorant-win64-shipping.exe&#10;cs2.exe"></textarea>
     </div>
 
-    <div class="field">
-      <label for="calendar_ics_urls">CALENDAR .ICS LINKS</label>
-      <p>One iCal URL per line (Google Calendar's "Secret address in iCal format", Outlook published calendar, ...). Powers the Agenda scene.</p>
-      <textarea id="calendar_ics_urls" placeholder="https://calendar.google.com/calendar/ical/.../basic.ics"></textarea>
-      <div class="restart-note" data-for="calendar_ics_urls">↻ restart Desko to apply</div>
-    </div>
-
     <div class="row">
       <div class="field">
         <label for="focus_work_min">FOCUS · WORK (min)</label>
@@ -93,14 +86,13 @@
   </div>
 
   <script>
-    var LIST_FIELDS = ["game_processes", "calendar_ics_urls"];
+    var LIST_FIELDS = ["game_processes"];
     var NUM_FIELDS = ["focus_work_min", "focus_break_min", "port"];
 
     function load() {
       fetch("/api/config").then(function (r) { return r.json(); }).then(function (c) {
         document.getElementById("weather_city").value = c.weather_city || "";
         document.getElementById("game_processes").value = (c.game_processes || []).join("\n");
-        document.getElementById("calendar_ics_urls").value = (c.calendar_ics_urls || []).join("\n");
         document.getElementById("focus_work_min").value = c.focus_work_min != null ? c.focus_work_min : 25;
         document.getElementById("focus_break_min").value = c.focus_break_min != null ? c.focus_break_min : 5;
         document.getElementById("port").value = c.port != null ? c.port : 7777;

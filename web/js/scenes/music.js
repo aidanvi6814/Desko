@@ -230,6 +230,20 @@ Desko.scenes.music = (function () {
     });
   }
 
+  function renderNotice(text) {
+    if (E.lyrics) E.lyrics.innerHTML = "";
+    lines = [];
+    activeIdx = -1;
+    if (E.lyrics) E.lyrics.scrollTop = 0;
+    scrollTarget = 0;
+    scrollCurrent = 0;
+    var d = document.createElement("p");
+    d.className = "none";
+    d.textContent = text;
+    if (E.lyrics) E.lyrics.appendChild(d);
+    if (E.lyricsLine) E.lyricsLine.textContent = "—";
+  }
+
   function renderLyrics(l) {
     if (E.lyrics) E.lyrics.innerHTML = "";
     lines = [];
@@ -439,11 +453,18 @@ Desko.scenes.music = (function () {
         updatePlayIcon();
         if ((m.artDataUrl || "") !== lastArtUrl) setArt(m.artDataUrl || "");
       }
+      // Only ever show lyrics that belong to the *current* track. Until the
+      // matching fetch lands, show a "loading" notice rather than the previous
+      // song's lyrics (which would also get karaoke-highlighted against the
+      // new song's position). This is the client half of the stale-lyrics fix.
       var l = state.lyrics;
-      var lk = l ? l.trackKey : null;
-      if (lk !== renderedLyricsKey) {
-        renderedLyricsKey = lk;
-        renderLyrics(l);
+      var matches = !!(l && tk && l.trackKey === tk);
+      var lyricsKey = tk == null ? "__none__" : (matches ? l.trackKey : "__loading__" + tk);
+      if (lyricsKey !== renderedLyricsKey) {
+        renderedLyricsKey = lyricsKey;
+        if (tk == null) renderNotice("— nothing playing —");
+        else if (matches) renderLyrics(l);
+        else renderNotice("— loading lyrics… —");
       }
     },
     onTick: function (state, now) {

@@ -15,8 +15,7 @@ import time
 log = logging.getLogger("desko.context")
 
 # Lower wins. A running focus timer is the strongest auto signal (you asked
-# for it), then music > game > dev > idle. `calendar` is manual-only (never
-# returned by evaluate()); it falls back to the default rank for hysteresis.
+# for it), then music > game > dev > idle.
 PRIORITY = {"focus": 0, "music": 1, "stats": 2, "dev": 3, "idle": 4}
 
 # Friendly label map for well-known game processes. The first matching alias
@@ -139,10 +138,9 @@ async def start(state, config) -> None:
 
             current = state.get("scene")
             if desired != current:
-                # Manual overrides (incl. calendar/focus) switch immediately;
-                # hysteresis only exists to stop auto-downgrade flicker (e.g. a
-                # song ending for a moment), which shouldn't delay a deliberate
-                # user selection.
+                # Manual overrides switch immediately; hysteresis only exists to
+                # stop auto-downgrade flicker (e.g. a song ending for a moment),
+                # which shouldn't delay a deliberate user selection.
                 is_downgrade = ov is None and PRIORITY.get(desired, 9) > PRIORITY.get(current, 9)
                 if is_downgrade:
                     if pending == desired:

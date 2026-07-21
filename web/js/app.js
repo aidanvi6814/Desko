@@ -1,8 +1,8 @@
 // Desko frontend core — v0 design port (system bar + scene frame + scene rail + launcher).
 // Plain script (no modules) for old Chromium on the realme 3.
 window.Desko = (function () {
-  var SCENES = ["idle", "music", "stats", "dev", "focus", "calendar"];
-  var state = { scene: "idle", override: null, locked: false, info: null, media: null, lyrics: null, sys: null, weather: null, dev: null, game: null, focus: null, calendar: null };
+  var SCENES = ["idle", "music", "stats", "dev", "focus"];
+  var state = { scene: "idle", override: null, locked: false, info: null, media: null, lyrics: null, sys: null, weather: null, dev: null, game: null, focus: null };
   var info = { hostname: "—", ip: "—" }; // from /api/info
   var scenes = {};
   var launcher = null;            // launcher module (optional)
@@ -187,40 +187,37 @@ window.Desko = (function () {
 
   // --- Phone battery (Battery Status API) ----------------------------------
   // Real battery for the device the dashboard runs on (the phone), shown in the
-  // system bar and on the idle scene's DEVICE row. The API is unavailable on
-  // some browsers (notably desktop Firefox); we degrade to "—" there.
+  // system bar and on the idle scene's DEVICE row. The Battery Status API is
+  // simply absent in a lot of mobile browsers (and over plain http on some),
+  // so when it's unavailable we HIDE the chip entirely rather than leave a dead
+  // "—" that looks broken. Where it's supported, it updates live.
   var battery = { level: null, charging: null, supported: false };
+  function batteryUnavailable() {
+    var wrap = el("sb-batt"); if (wrap) wrap.style.display = "none";
+    var dev = el("i-device"); if (dev) dev.textContent = "—";
+  }
   function renderBattery() {
-    var fill = el("sb-batt-fill");
-    var pct = el("sb-batt-pct");
-    var bolt = el("sb-batt-bolt");
-    var wrap = el("sb-batt");
-    var dev = el("i-device");
-    if (!battery.supported || battery.level == null) {
-      if (pct) pct.textContent = "—";
-      if (fill) fill.setAttribute("width", "0");
-      if (bolt) bolt.style.display = "none";
-      if (dev) dev.textContent = "—";
-      if (wrap) wrap.classList.remove("batt-low");
-      return;
-    }
+    if (!battery.supported || battery.level == null) { batteryUnavailable(); return; }
+    var wrap = el("sb-batt"); if (wrap) wrap.style.display = "";
     var lvl = Math.max(0, Math.min(1, battery.level));
     var low = lvl <= 0.2 && !battery.charging;
-    if (fill) { fill.setAttribute("width", (14 * lvl).toFixed(2)); }
-    if (pct) pct.textContent = Math.round(lvl * 100) + "%";
-    if (bolt) bolt.style.display = battery.charging ? "" : "none";
+    var fill = el("sb-batt-fill"); if (fill) fill.setAttribute("width", (14 * lvl).toFixed(2));
+    var pct = el("sb-batt-pct"); if (pct) pct.textContent = Math.round(lvl * 100) + "%";
+    var bolt = el("sb-batt-bolt"); if (bolt) bolt.style.display = battery.charging ? "" : "none";
     if (wrap) wrap.classList.toggle("batt-low", low);
-    if (dev) dev.textContent = Math.round(lvl * 100) + "%" + (battery.charging ? " CHRG" : "");
+    var dev = el("i-device"); if (dev) dev.textContent = Math.round(lvl * 100) + "%" + (battery.charging ? " CHRG" : "");
   }
   function initBattery() {
-    if (!navigator.getBattery) { renderBattery(); return; }
-    navigator.getBattery().then(function (b) {
-      battery.supported = true;
-      var sync = function () { battery.level = b.level; battery.charging = b.charging; renderBattery(); };
-      b.addEventListener("levelchange", sync);
-      b.addEventListener("chargingchange", sync);
-      sync();
-    }).catch(function () { renderBattery(); });
+    if (!navigator.getBattery) { batteryUnavailable(); return; }
+    try {
+      navigator.getBattery().then(function (b) {
+        battery.supported = true;
+        var sync = function () { battery.level = b.level; battery.charging = b.charging; renderBattery(); };
+        b.addEventListener("levelchange", sync);
+        b.addEventListener("chargingchange", sync);
+        sync();
+      }).catch(batteryUnavailable);
+    } catch (e) { batteryUnavailable(); }
   }
 
   // --- Keep-awake (NoSleep shim) -------------------------------------------
@@ -259,6 +256,9 @@ window.Desko = (function () {
     if (touchStartX == null) return;
     var t = e.changedTouches[0];
     var dx = t.clientX - touchStartX, dy = t.clientY - touchStartY;
+    // On the minimal home screen, any tap or swipe just returns to the
+    // dashboard (scene selection happens by swiping on the dashboard itself).
+    if (launcherOpen) { touchStartX = null; closeLauncher(); return; }
     if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.5) {
       send({ type: "cycle", dir: dx > 0 ? -1 : 1 });
       touchStartX = null; return;
@@ -295,7 +295,7 @@ window.Desko = (function () {
     if (launcher && launcher.onTick) { try { launcher.onTick(Date.now()); } catch (e) {} }
   }
 
-  // --- Nav controls (lock button, launcher widget buttons, back) -----------
+  // --- Nav controls (lock button + tap-to-dismiss home) --------------------
   function wireNav() {
     var lockBtn = el("lock-btn");
     if (lockBtn) {
@@ -307,14 +307,10 @@ window.Desko = (function () {
       // document-level double-tap-anywhere gesture (same pattern as fs-btn).
       lockBtn.addEventListener("touchend", function (e) { e.stopPropagation(); }, { passive: true });
     }
-    qsa(".widget-btn").forEach(function (b) {
-      b.addEventListener("click", function () {
-        var s = b.dataset.scene;
-        if (s) { send({ type: "override", scene: s }); closeLauncher(); }
-      });
-    });
-    var back = el("launcher-back");
-    if (back) back.addEventListener("click", closeLauncher);
+    // Minimal home screen: a click (desktop) anywhere returns to the dashboard.
+    // Touch devices are handled in onTouchEnd (any tap/swipe dismisses).
+    var launcherEl = el("launcher");
+    if (launcherEl) launcherEl.addEventListener("click", function () { closeLauncher(); });
   }
 
   // --- Public launcher controls (used by idle scene's double-tap) ----------

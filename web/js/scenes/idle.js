@@ -44,7 +44,7 @@ Desko.scenes.idle = (function () {
     if (E.clockHm) E.clockHm.textContent = ist.hour + ":" + ist.minute;
     if (E.clockS) E.clockS.textContent = ist.second;
     var uk = tzTime(d, "Europe/London");
-    if (E.clockUk) E.clockUk.textContent = "LONDON " + uk.hour + ":" + uk.minute;
+    if (E.clockUk) E.clockUk.textContent = uk.hour + ":" + uk.minute;
     // Date follows IST too, so it doesn't flip a day early/late against the
     // big clock right above it around midnight.
     if (E.date) {

@@ -124,13 +124,16 @@ body.is-fs .fs-btn .fs-icon-collapse { display: block; }
 .idle-scene { display: grid; grid-template-columns: 1.7fr 1fr; grid-template-rows: 1fr auto auto; gap: 10px; }
 .clock-block { grid-row: 1 / 4; border: 1px solid var(--border); background: var(--card); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; padding: 24px 5vw; cursor: pointer; text-align: left; }
 .terminal-prompt { color: var(--primary); font-size: 10px; letter-spacing: .14em; }
-.clock { display: flex; align-items: flex-start; color: var(--foreground); font-size: clamp(76px, 15vw, 180px); font-weight: 700; line-height: .93; letter-spacing: -.1em; }
-.clock small { margin: 7% 0 0 12px; color: var(--primary); font-size: .16em; letter-spacing: 0; }
-.clock small.clock-tz { margin-left: 10px; color: var(--muted-foreground); font-size: .13em; letter-spacing: .08em; font-weight: 600; align-self: flex-start; }
-.date { color: var(--muted-foreground); margin-top: 12px; font-size: clamp(12px, 1.5vw, 18px); letter-spacing: .13em; }
-.clock-secondary { margin-top: 8px; display: flex; align-items: center; color: var(--muted-foreground); font-size: clamp(10px, 1.1vw, 14px); letter-spacing: .12em; }
-.clock-secondary i { display: inline-block; width: 5px; height: 5px; margin-right: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
-.double-tap { margin-top: 24px; color: var(--primary); font-size: 8px; opacity: .65; }
+.clock { display: flex; align-items: baseline; color: var(--foreground); font-size: clamp(66px, 13vw, 150px); font-weight: 700; line-height: .95; letter-spacing: -.06em; }
+.clock small { margin-left: 10px; color: var(--primary); font-size: .2em; align-self: flex-start; margin-top: .18em; letter-spacing: 0; }
+.clock .clock-tz { margin-left: 12px; color: var(--muted-foreground); font-size: .16em; font-style: normal; font-weight: 600; letter-spacing: .12em; align-self: flex-start; margin-top: .34em; }
+.date { color: var(--muted-foreground); margin-top: 14px; font-size: clamp(12px, 1.5vw, 17px); letter-spacing: .14em; }
+/* London: a compact bordered chip -- clearly readable (time in foreground)
+   but visually secondary to the big IST clock above. */
+.clock-alt { margin-top: 16px; align-self: flex-start; display: inline-flex; align-items: center; gap: 9px; padding: 8px 14px; border: 1px solid var(--border); color: var(--muted-foreground); font-size: clamp(12px, 1.5vw, 16px); letter-spacing: .14em; }
+.clock-alt svg { width: 15px; height: 15px; color: var(--accent); flex: 0 0 auto; }
+.clock-alt b { color: var(--foreground); font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+.double-tap { margin-top: 18px; color: var(--primary); font-size: 8px; opacity: .6; letter-spacing: .1em; }
 .weather { display: flex; align-items: center; gap: 15px; }
 .weather > .weather-icon { font-size: 38px; color: var(--accent); }
 .weather > div { flex: 1; }
@@ -294,18 +297,23 @@ body.is-fs .fs-btn .fs-icon-collapse { display: block; }
 
 /* ============== FOCUS (Pomodoro) ============== */
 .focus-scene { display: grid; grid-template-columns: 1.5fr 1fr; grid-template-rows: 1fr; gap: 10px; }
-.focus-main { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; }
-.focus-main .panel-label { align-self: stretch; }
-.focus-ring-wrap { position: relative; height: min(46vh, 100%); aspect-ratio: 1; display: grid; place-items: center; }
+.focus-main { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; min-height: 0; }
+.focus-main .panel-label { align-self: stretch; flex: 0 0 auto; }
+/* The ring takes the space left after the label + controls and stays a
+   centered circle (the SVG viewBox keeps it round inside its box). The time is
+   sized in vh -- the same axis the ring is height-limited on -- so it always
+   sits comfortably inside the circle instead of overflowing it on short
+   landscape screens (which is what "the circle cuts the numbers" was). */
+.focus-ring-wrap { position: relative; flex: 1 1 auto; min-height: 0; align-self: stretch; display: grid; place-items: center; }
 .focus-ring { width: 100%; height: 100%; transform: rotate(-90deg); }
 .focus-ring-bg { fill: none; stroke: var(--secondary); stroke-width: 4; }
 .focus-ring-fg { fill: none; stroke: var(--primary); stroke-width: 5; stroke-linecap: round; transition: stroke-dashoffset .3s linear, stroke .3s; filter: drop-shadow(0 0 6px rgb(130 245 155 / .4)); }
 .focus-scene.is-break .focus-ring-fg { stroke: var(--accent); filter: drop-shadow(0 0 6px rgb(230 173 87 / .4)); }
-.focus-time { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-.focus-time span { font-size: clamp(40px, 8vw, 76px); font-weight: 700; letter-spacing: -.04em; line-height: 1; color: var(--foreground); font-variant-numeric: tabular-nums; }
-.focus-time small { color: var(--muted-foreground); font-size: 10px; letter-spacing: .2em; margin-top: 8px; }
+.focus-time { position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; pointer-events: none; }
+.focus-time span { font-size: clamp(28px, 7vh, 56px); font-weight: 700; letter-spacing: -.03em; line-height: 1; color: var(--foreground); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.focus-time small { color: var(--muted-foreground); font-size: clamp(8px, 1.4vh, 11px); letter-spacing: .2em; margin-top: 8px; }
 .focus-scene.is-break .focus-time small { color: var(--accent); }
-.focus-controls { display: flex; align-items: center; gap: 16px; }
+.focus-controls { flex: 0 0 auto; display: flex; align-items: center; gap: 16px; }
 .focus-side { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
 .focus-cycles { display: flex; flex-direction: column; gap: 4px; }
 .focus-cycles strong { font-size: clamp(32px, 6vw, 54px); color: var(--primary); font-weight: 700; line-height: 1; letter-spacing: -.04em; }
@@ -321,38 +329,17 @@ body.is-fs .fs-btn .fs-icon-collapse { display: block; }
 .preset-btn:hover { border-color: var(--primary); }
 .preset-btn:active { background: rgb(130 245 155 / .12); transform: scale(.94); }
 
-/* ============== CALENDAR (Agenda) ============== */
-.calendar-scene { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; gap: 10px; }
-.agenda-head { display: flex; flex-direction: column; justify-content: center; gap: 4px; }
-.agenda-countdown { margin: 0 0 2px; color: var(--primary); font-size: clamp(13px, 1.9vw, 20px); letter-spacing: .12em; font-weight: 700; }
-.agenda-head h2 { margin: 2px 0; font-size: clamp(22px, 3.2vw, 40px); color: var(--foreground); line-height: 1.08; letter-spacing: -.01em; }
-.agenda-when { margin: 4px 0 0; color: var(--foreground); font-size: clamp(11px, 1.4vw, 15px); }
-.agenda-loc { margin: 3px 0 0; color: var(--muted-foreground); font-size: 10px; opacity: .85; }
-.agenda-loc:empty { display: none; }
-.agenda-list { display: flex; flex-direction: column; min-height: 0; }
-.agenda-list ul { margin: 10px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; min-height: 0; scrollbar-width: none; }
-.agenda-list ul::-webkit-scrollbar { display: none; width: 0; }
-.agenda-list li { display: flex; align-items: baseline; gap: 10px; padding: 8px 10px; background: var(--secondary); font-size: 11px; }
-.agenda-list .ag-day { color: var(--primary); flex: 0 0 auto; width: 72px; font-size: 9px; letter-spacing: .05em; }
-.agenda-list .ag-time { color: var(--foreground); flex: 0 0 auto; width: 52px; font-variant-numeric: tabular-nums; }
-.agenda-list .ag-title { color: var(--foreground); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agenda-empty { color: var(--muted-foreground); font-style: italic; opacity: .6; background: transparent !important; padding-left: 0 !important; }
-
-/* ============== LAUNCHER ============== */
-.launcher-shell { position: fixed; inset: 0; z-index: 30; padding: max(12px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); display: flex; flex-direction: column; gap: 10px; background: var(--background); }
+/* ============== LAUNCHER (minimal home) ============== */
+/* Just the wordmark + the animated desk. Tap/swipe anywhere returns to the
+   dashboard (handled in app.js). */
+.launcher-shell { position: fixed; inset: 0; z-index: 30; padding: max(12px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); background: var(--background); cursor: pointer; }
 .launcher-shell[hidden] { display: none; }
-.launcher-header { height: 38px; display: flex; justify-content: space-between; align-items: center; }
-.back-button { height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 14px; background: var(--card); border: 1px solid var(--border); cursor: pointer; font-size: 10px; color: var(--foreground); }
-.back-button .b-ico { font-size: 13px; }
-.launcher-status { display: flex; gap: 22px; color: var(--muted-foreground); font-size: 9px; }
-.launcher-status span { display: flex; align-items: center; gap: 6px; }
-.launcher-status .online { color: var(--primary); }
-.launcher-status #launcher-pc { color: var(--muted-foreground); }
-.launcher-content { min-height: 0; flex: 1; display: grid; grid-template-columns: .9fr 1.3fr; align-items: center; gap: 30px; border: 1px solid var(--border); background: var(--card); padding: 18px 4vw; }
-.brand-copy { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; }
-.brand-copy h1 { margin: 0; font-size: clamp(56px, 8vw, 108px); line-height: .9; letter-spacing: -.1em; color: var(--foreground); }
+.launcher-content { height: 100%; display: grid; grid-template-columns: .85fr 1.15fr; align-items: center; gap: 30px; border: 1px solid var(--border); background: var(--card); padding: 18px 4vw; }
+.brand-copy { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 16px; }
+.brand-copy h1 { margin: 0; font-size: clamp(56px, 9vw, 120px); line-height: .9; letter-spacing: -.1em; color: var(--foreground); }
 .brand-copy h1 span { color: var(--primary); }
 .brand-copy h1 i { color: var(--primary); font-style: normal; animation: blink 1s steps(1) infinite; }
+.launcher-hint { color: var(--muted-foreground); font-size: 9px; letter-spacing: .22em; opacity: .6; }
 .desk-scene { position: relative; height: 100%; min-height: 210px; overflow: hidden; }
 .wall-lines { position: absolute; inset: 0; background: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px); background-size: 28px 28px; opacity: .13; }
 .window { position: absolute; right: 4%; top: 4%; width: 23%; height: 38%; border: 4px solid var(--border); background: var(--background); }
@@ -394,14 +381,6 @@ body.is-fs .fs-btn .fs-icon-collapse { display: block; }
 @keyframes tail { 50% { transform: rotate(-10deg); } }
 @keyframes plant { 50% { rotate: 2deg; } }
 @keyframes lamp { 50% { filter: brightness(1.2); } }
-.widget-grid { height: 76px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
-.widget-grid button { min-width: 0; border: 1px solid var(--border); background: var(--card); display: flex; align-items: center; gap: 8px; padding: 8px 9px; text-align: left; cursor: pointer; transition: border-color .15s, background .15s; color: var(--foreground); }
-.widget-grid button:hover { border-color: var(--primary); background: var(--secondary); }
-.widget-icon { display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 auto; border: 1px solid var(--border); color: var(--primary); font-size: 15px; }
-.widget-grid button > span:nth-child(2) { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.widget-grid b { font-size: 9px; }
-.widget-grid small { color: var(--muted-foreground); font-size: 7px; white-space: nowrap; }
-.widget-grid button > i { margin-left: auto; color: var(--muted-foreground); font-size: 8px; font-style: normal; }
 
 /* portrait lockout */
 @media (orientation: portrait) {
