@@ -73,6 +73,12 @@
     </div>
 
     <div class="field">
+      <label for="rotate_sec">SCENE ROTATION (seconds)</label>
+      <p>How long each scene stays on screen before the carousel advances. Applies live.</p>
+      <input id="rotate_sec" type="number" min="5" max="3600" value="60">
+    </div>
+
+    <div class="field">
       <label for="port">SERVER PORT</label>
       <p>TCP port Desko serves on. Changing it needs a restart (and a new URL on the phone).</p>
       <input id="port" type="number" min="1" max="65535" value="7777">
@@ -87,7 +93,7 @@
 
   <script>
     var LIST_FIELDS = ["game_processes"];
-    var NUM_FIELDS = ["focus_work_min", "focus_break_min", "port"];
+    var NUM_FIELDS = ["focus_work_min", "focus_break_min", "rotate_sec", "port"];
 
     function load() {
       fetch("/api/config").then(function (r) { return r.json(); }).then(function (c) {
@@ -95,6 +101,7 @@
         document.getElementById("game_processes").value = (c.game_processes || []).join("\n");
         document.getElementById("focus_work_min").value = c.focus_work_min != null ? c.focus_work_min : 25;
         document.getElementById("focus_break_min").value = c.focus_break_min != null ? c.focus_break_min : 5;
+        document.getElementById("rotate_sec").value = c.rotate_sec != null ? c.rotate_sec : 60;
         document.getElementById("port").value = c.port != null ? c.port : 7777;
       }).catch(function () { setStatus("could not load current settings", "err"); });
     }

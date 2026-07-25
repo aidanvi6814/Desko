@@ -214,6 +214,13 @@ async def _execute_command(sess, action: str) -> None:
             await sess.try_skip_next_async()
         elif action == "prev":
             await sess.try_skip_previous_async()
+        elif action.startswith("seek:"):
+            # GSMTC wants an absolute position in 100-ns ticks. Not every
+            # source supports seeking (browsers vary); try_change... returns
+            # False rather than throwing when unsupported, which we ignore.
+            secs = float(action.split(":", 1)[1])
+            ticks = int(max(0.0, secs) * 10_000_000)
+            await sess.try_change_playback_position_async(ticks)
     except Exception as e:
         log.debug("media command %r failed: %r", action, e)
 

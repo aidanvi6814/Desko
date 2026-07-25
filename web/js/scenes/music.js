@@ -45,17 +45,21 @@ Desko.scenes.music = (function () {
     if (art) {
       if (lastArtUrl && lastArtUrl === art) return; // same url, no-op
       E.art.removeAttribute("src");
-      E.art.onload = function () { applyArtAccent(E.art); };
+      // Ambient album-art background is intentionally page-wide and shown on
+      // EVERY scene, not just music. setArt runs on every media update (app.js
+      // dispatches media/lyrics to music.onStateChange regardless of the active
+      // scene), so the backdrop stays current and visible throughout Desko.
+      // It's hidden again only when a track has no art / nothing is playing
+      // (the else branch below). We build the ambient bg from a tiny downscaled
+      // copy of the cover (setBgFromArt) rather than the full-res image, so the
+      // CSS blur only has to smooth 64px instead of the whole cover.
+      E.art.onload = function () { applyArtAccent(E.art); setBgFromArt(E.art, art); };
       Promise.resolve().then(function () {
         if (!E.art) return;
         E.art.src = art;
         E.art.hidden = false;
         E.artBox.classList.add("has-art");
         if (E.brand) E.brand.style.display = "none";
-        if (E.bg) {
-          E.bg.style.backgroundImage = 'url("' + art + '")';
-          E.bg.classList.add("visible");
-        }
         lastArtUrl = art;
       });
     } else {
@@ -67,6 +71,25 @@ Desko.scenes.music = (function () {
       if (E.scene) E.scene.classList.remove("has-accent");
       lastArtUrl = "";
     }
+  }
+
+  // Ambient blurred backdrop, built from a 64px downscaled copy of the cover.
+  // background-size:cover upscales this tiny canvas back to full screen, which
+  // is itself a strong blur for free, so the CSS filter (see .music-bg) only
+  // needs a small radius instead of a full-res blur(40px) — by far the biggest
+  // GPU saving on the Realme 3. The cover is a same-origin data: URL so the
+  // canvas isn't tainted; on any failure we fall back to the full-res image.
+  function setBgFromArt(img, fallback) {
+    if (!E.bg) return;
+    var url = fallback;
+    try {
+      var c = document.createElement("canvas");
+      c.width = 64; c.height = 64;
+      c.getContext("2d").drawImage(img, 0, 0, 64, 64);
+      url = c.toDataURL("image/jpeg", 0.6);
+    } catch (e) { /* keep fallback */ }
+    E.bg.style.backgroundImage = 'url("' + url + '")';
+    E.bg.classList.add("visible");
   }
 
   // --- per-track accent from the album art -----------------------------------
@@ -139,6 +162,11 @@ Desko.scenes.music = (function () {
     if (!track) return;
     var spans = track.querySelectorAll(".track");
     if (!spans.length) return;
+    // Skip when the text is unchanged. onStateChange re-runs on EVERY media
+    // update — including the ~0.3s position patches — so without this guard we
+    // strip and re-add .animating several times a second, restarting the scroll
+    // from the start each time and leaving it visibly "stuck" near the front.
+    if (spans[0].textContent === text) return;
     spans[0].textContent = text;
     spans[1].textContent = text; // duplicate for seamless loop
     // Remove the animating class so we re-measure cleanly.
@@ -263,6 +291,11 @@ Desko.scenes.music = (function () {
       l.synced.forEach(function (row) {
         var p = document.createElement("p");
         p.textContent = row[1] || "";
+        p.className = "seekable";
+        p.style.opacity = "0.18";
+        (function (t) {
+          p.addEventListener("click", function () { seekTo(t); });
+        })(row[0]);
         E.lyrics.appendChild(p);
         lines.push({ t: row[0], el: p });
       });
@@ -278,14 +311,20 @@ Desko.scenes.music = (function () {
     }
   }
 
-  // Distance-based dimming + active toggle (computed only on active change).
+  // Distance-based dimming + active toggle — only touches lines in the
+  // visible cone around the old and new active index so per-tick DOM writes
+  // stay cheap on lower-end phones (Realme 3).  Base opacity 0.18 is set
+  // during renderLyrics for lines ≥3 away from active.
   function setActive(idx) {
     if (idx === activeIdx) return;
+    var prev = activeIdx;
     activeIdx = idx;
+    var lo = Math.min(prev < 0 ? idx : prev, idx) - 2;
+    var hi = Math.max(prev < 0 ? idx : prev, idx) + 2;
     for (var j = 0; j < lines.length; j++) {
+      if (j < lo || j > hi) continue;
       var d = Math.abs(j - idx);
       lines[j].el.classList.toggle("active", d === 0);
-      // Focus window: 1.0 at center, ~0.5 at ±1, ~0.28 at ±2, ~0.18 far.
       lines[j].el.style.opacity = d === 0 ? 1 : Math.max(0.18, 0.6 - d * 0.16);
     }
     if (E.lyricsLine) E.lyricsLine.textContent = lines.length ? (idx + 1) + "/" + lines.length : "—";
@@ -297,47 +336,35 @@ Desko.scenes.music = (function () {
       var maxScroll = stack.scrollHeight - stack.clientHeight;
       if (targetTop > maxScroll) targetTop = maxScroll;
       scrollTarget = targetTop;
-      // A long/wrapped line (or the first line of a freshly-loaded track)
-      // can land far from where we're currently scrolled — gliding a big
-      // distance at the same per-frame percentage takes visibly longer and
-      // reads as "lag", so snap those instantly instead of easing into them.
-      // Normal one-line-to-the-next moves are small and still glide.
       if (Math.abs(targetTop - scrollCurrent) > 160) {
         scrollCurrent = targetTop;
         programmatic = true;
         stack.scrollTop = targetTop;
+      } else if (rafHandle == null && Math.abs(targetTop - scrollCurrent) > 0.5) {
+        startGlide();
       }
     }
   }
 
   // The rAF loop: glides scrollCurrent toward scrollTarget whenever the user
-  // isn't in manual-scroll mode. Cheap — one transform-equivalent assignment
-  // per frame. Cancelled on onExit to save battery on a desk display.
+  // isn't in manual-scroll mode.  Stops itself when idle (at target, no manual
+  // freeze) to save CPU/battery on lower-end phones — setActive wakes it back
+  // up when the highlight line changes.
   function glideStep() {
     if (!E.lyrics) { rafHandle = null; return; }
     var now = Date.now();
     if (now < manualScrollUntil) {
-      // user is reading; freeze on their position
       scrollCurrent = E.lyrics.scrollTop;
       scrollTarget = scrollCurrent;
     } else {
       var diff = scrollTarget - scrollCurrent;
       if (Math.abs(diff) > 0.5) {
-        // Critically-damped ease: each frame moves ~22% of the remaining distance.
         scrollCurrent += diff * 0.3;
-        // Every glide-driven scrollTop write must be flagged programmatic —
-        // without this, the 'scroll' event it fires gets treated as a user
-        // drag by onUserScroll(), which immediately arms the 5s manual-freeze
-        // and pins scrollTarget back to the barely-moved current position.
-        // That self-triggering loop is what made the auto-centering stall
-        // almost as soon as it started (reported as "lyrics don't scroll
-        // down by themselves" / "smooth but laggy").
         programmatic = true;
         E.lyrics.scrollTop = scrollCurrent;
       } else {
-        programmatic = true;
-        E.lyrics.scrollTop = scrollTarget;
-        scrollCurrent = scrollTarget;
+        rafHandle = null;
+        return;
       }
     }
     rafHandle = requestAnimationFrame(glideStep);
@@ -355,11 +382,26 @@ Desko.scenes.music = (function () {
   var programmatic = false;
   function onUserScroll() {
     if (programmatic) { programmatic = false; return; }
-    manualScrollUntil = Date.now() + 5000; // 5s auto-resume
+    manualScrollUntil = Date.now() + 3000; // 3s auto-resume
     scrollCurrent = E.lyrics.scrollTop;
     // We don't move scrollTarget while the user is reading — it stays on the
-    // last active line's target, so when the 5s expires the glide re-centers
+    // last active line's target, so when the 3s expires the glide re-centers
     // on the (now possibly newer) active line.
+  }
+
+  // Arm the manual-scroll freeze directly from the input event, NOT from the
+  // 'scroll' event. Browsers coalesce scroll events to one per frame, so a
+  // user drag that lands in the same frame as a glide's programmatic scrollTop
+  // write collapses into a single 'scroll' event still flagged programmatic —
+  // onUserScroll then swallows the user's drag and the next frame snaps back to
+  // the active line, making the lyrics feel un-scrollable while a song plays.
+  // touchstart/pointerdown/wheel are only ever real user input (the glide never
+  // fires them), so arming here is unambiguous. Once armed, glideStep stops
+  // writing scrollTop for 3s, so no programmatic events fire and subsequent
+  // 'scroll' events during the drag re-arm the freeze correctly.
+  function armManualScroll() {
+    manualScrollUntil = Date.now() + 3000;
+    if (E.lyrics) scrollCurrent = E.lyrics.scrollTop;
   }
 
   // Highlight slightly ahead of the raw computed position. LRC timestamps
@@ -392,11 +434,125 @@ Desko.scenes.music = (function () {
       .then(function (r) { if (!r.ok) console.warn("media " + action + " -> " + r.status); })
       .catch(function () {});
   }
+
+  // Tap a synced lyric line -> jump the track to that line's timestamp.
+  function seekTo(sec) {
+    if (typeof sec !== "number" || sec < 0) return;
+    // Deliberate jump: drop the manual-scroll freeze so the glide recenters on
+    // the new active line immediately, and highlight optimistically so the tap
+    // feels instant (the server position patch confirms within ~0.3s).
+    manualScrollUntil = 0;
+    highlight(sec);
+    fetch("/api/media/seek?pos=" + encodeURIComponent(sec.toFixed(3)), { method: "POST" })
+      .then(function (r) { if (!r.ok) console.warn("seek -> " + r.status); })
+      .catch(function () {});
+  }
+
+  // --- volume ----------------------------------------------------------------
+  var volDragging = false;      // user has the slider grabbed; ignore server echoes
+  var volSendTimer = null;      // throttle POSTs while dragging
+  var pendingVol = null;
+  function sendVolume(level) {
+    pendingVol = level;
+    if (volSendTimer) return;
+    volSendTimer = setTimeout(function () {
+      volSendTimer = null;
+      if (pendingVol == null) return;
+      var lv = pendingVol; pendingVol = null;
+      fetch("/api/volume?level=" + lv, { method: "POST" }).catch(function () {});
+    }, 90);
+  }
+  function volIconMarkup(level, muted) {
+    var spk = '<path d="M3 10v4h4l5 5V5L7 10H3z"/>';
+    if (muted || level === 0) {
+      return spk + '<path d="M16 9l5 5M21 9l-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>';
+    }
+    if (level < 50) {
+      return spk + '<path d="M16 8a5 5 0 0 1 0 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>';
+    }
+    return spk + '<path d="M16 8a5 5 0 0 1 0 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M18.5 5.5a9 9 0 0 1 0 13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>';
+  }
+  function updateMuteIcon(level, muted) {
+    var m = volIconMarkup(level, muted);
+    // Reflect state on BOTH the popover's mute toggle and the always-visible
+    // transport speaker button, so you can see mute at a glance without opening.
+    if (E.muteIcon) E.muteIcon.innerHTML = m;
+    if (E.volBtnIcon) E.volBtnIcon.innerHTML = m;
+  }
+
+  // --- volume popover (open on demand, auto-hide) ----------------------------
+  var volHideTimer = null;
+  function armVolHide() {
+    if (volHideTimer) clearTimeout(volHideTimer);
+    volHideTimer = setTimeout(closeVolPop, 3500);  // vanish after inactivity
+  }
+  function onDocForVol(e) {
+    if (!E.volRow) return;
+    if (E.volRow.contains(e.target) || (E.volBtn && E.volBtn.contains(e.target))) return;
+    closeVolPop();  // tap anywhere else dismisses it
+  }
+  function openVolPop() {
+    if (!E.volRow) return;
+    E.volRow.hidden = false;
+    if (E.volBtn) E.volBtn.setAttribute("aria-expanded", "true");
+    armVolHide();
+    // Defer so the same tap that opened it doesn't immediately close it.
+    setTimeout(function () { document.addEventListener("pointerdown", onDocForVol, true); }, 0);
+  }
+  function closeVolPop() {
+    if (volHideTimer) { clearTimeout(volHideTimer); volHideTimer = null; }
+    if (E.volRow) E.volRow.hidden = true;
+    if (E.volBtn) E.volBtn.setAttribute("aria-expanded", "false");
+    document.removeEventListener("pointerdown", onDocForVol, true);
+  }
+
+  function renderVolume(state) {
+    var v = state.volume;
+    var has = !!v;
+    // No pycaw / no audio endpoint -> hide the whole control (button + popover).
+    if (E.volBtn) E.volBtn.hidden = !has;
+    if (!has) { closeVolPop(); return; }
+    var level = typeof v.level === "number" ? v.level : 0;
+    var muted = !!v.muted;
+    if (!volDragging && E.vol) E.vol.value = level;
+    if (E.volPct) E.volPct.textContent = muted ? "MUTE" : (level + "%");
+    updateMuteIcon(level, muted);
+  }
+  function wireVolume() {
+    if (E.volBtn) E.volBtn.addEventListener("click", function () {
+      if (E.volRow && E.volRow.hidden) openVolPop(); else closeVolPop();
+    });
+    if (E.vol) {
+      E.vol.addEventListener("input", function () {
+        volDragging = true;
+        armVolHide();  // keep the popover up while adjusting
+        var v = parseInt(E.vol.value, 10) || 0;
+        if (E.volPct) E.volPct.textContent = v + "%";
+        updateMuteIcon(v, false);
+        sendVolume(v);
+      });
+      var release = function () { volDragging = false; armVolHide(); };
+      E.vol.addEventListener("change", release);
+      E.vol.addEventListener("pointerup", release);
+      E.vol.addEventListener("touchend", release, { passive: true });
+    }
+    if (E.mute) E.mute.addEventListener("click", function () {
+      armVolHide();
+      fetch("/api/volume?mute=1", { method: "POST" }).catch(function () {});
+    });
+  }
   function wireTransport() {
     if (E.prev) E.prev.addEventListener("click", function () { sendCommand("prev"); });
     if (E.play) E.play.addEventListener("click", function () { sendCommand("play_pause"); });
     if (E.next) E.next.addEventListener("click", function () { sendCommand("next"); });
-    if (E.lyrics) E.lyrics.addEventListener("scroll", onUserScroll, { passive: true });
+    if (E.lyrics) {
+      E.lyrics.addEventListener("scroll", onUserScroll, { passive: true });
+      // Freeze auto-centering the instant the user touches the list (see
+      // armManualScroll) so the drag isn't fought by the glide loop.
+      E.lyrics.addEventListener("touchstart", armManualScroll, { passive: true });
+      E.lyrics.addEventListener("pointerdown", armManualScroll, { passive: true });
+      E.lyrics.addEventListener("wheel", armManualScroll, { passive: true });
+    }
   }
 
   return {
@@ -420,6 +576,13 @@ Desko.scenes.music = (function () {
         play: document.getElementById("t-play"),
         playIcon: document.getElementById("t-play-icon"),
         next: document.getElementById("t-next"),
+        volBtn: document.getElementById("t-vol-btn"),
+        volBtnIcon: document.getElementById("t-vol-btn-icon"),
+        volRow: document.getElementById("m-volume"),
+        mute: document.getElementById("t-mute"),
+        muteIcon: document.getElementById("t-mute-icon"),
+        vol: document.getElementById("t-vol"),
+        volPct: document.getElementById("m-vol-pct"),
       };
       renderedTrack = null;
       renderedLyricsKey = null;
@@ -429,11 +592,15 @@ Desko.scenes.music = (function () {
       scrollCurrent = 0;
       manualScrollUntil = 0;
       firstHighlight = true;
+      volDragging = false;
       wireTransport();
+      wireVolume();
       this.onStateChange(state);
+      this.onVolume(state);
       this.onTick(state, Date.now());
       startGlide();
     },
+    onVolume: function (state) { renderVolume(state); },
     onStateChange: function (state) {
       var m = state.media;
       var tk = m ? (m.artist + "||" + m.title) : null;
@@ -481,10 +648,11 @@ Desko.scenes.music = (function () {
     },
     onExit: function () {
       stopGlide();
-      // #m-bg lives at the page level (so it can show through the system bar
-      // too) — hide it on the way out so it doesn't keep bleeding through
-      // that translucent bar while looking at a different scene.
-      if (E.bg) E.bg.classList.remove("visible");
+      closeVolPop();
+      // Intentionally do NOT hide #m-bg here: the ambient album-art background
+      // is meant to persist across every scene (see setArt), so it stays up
+      // when we leave the music scene. setArt hides it on its own when a track
+      // has no art / playback stops.
     },
   };
 })();

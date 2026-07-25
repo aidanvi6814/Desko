@@ -1,12 +1,16 @@
-"""Scene priority engine (IMPLEMENTATION_PLAN §4.3).
+"""Scene rotation engine.
 
-Priority (highest wins): music > stats (game running) > dev (VS Code fresh+focused)
-> idle. A manual override always wins until cleared or override_timeout_sec elapses.
-Hysteresis: a lower-priority candidate must win 2 consecutive evaluations before
-the scene actually switches (prevents flicker when a song ends). Evaluated 2x/s.
+Pure carousel: every scene gets equal air time -- ``rotate_sec`` seconds each
+(default 60) -- cycling idle -> music -> stats -> dev -> focus -> idle... The
+only things that change the visible scene are (1) this rotation timer, (2) a
+manual swipe / scene pick (a temporary override), and (3) lock, which freezes
+the current scene. Music/game/focus no longer auto-interrupt the rotation (by
+request); the old priority engine caused visible flicker (e.g. clock<->workspace
+bouncing every few seconds as VS Code focus flickered), which this removes.
 
 Also publishes the ``game`` section whenever the set of running game processes
 changes, so the Stats scene header can show the current game's friendly name.
+Evaluated 2x/s.
 """
 import asyncio
 import logging
@@ -14,9 +18,9 @@ import time
 
 log = logging.getLogger("desko.context")
 
-# Lower wins. A running focus timer is the strongest auto signal (you asked
-# for it), then music > game > dev > idle.
-PRIORITY = {"focus": 0, "music": 1, "stats": 2, "dev": 3, "idle": 4}
+# Fixed carousel order. Mirrors state.SCENES; kept local so the rotation order
+# is explicit and independent of that tuple's ordering.
+ROTATION = ("idle", "music", "stats", "dev", "focus")
 
 # Friendly label map for well-known game processes. The first matching alias
 # wins; the rest fall back to the matched .exe name in upper case.
@@ -55,71 +59,46 @@ def _find_running_game(config):
     return None, None
 
 
-def _running_games(config) -> bool:
-    matched, _ = _find_running_game(config)
-    return matched is not None
-
-
-def evaluate(state, config) -> str:
-    """Return the desired scene based on current state (ignores override)."""
-    focus = state.get("focus")
-    if focus and focus.get("running"):
-        return "focus"
-    media = state.get("media")
-    if (
-        media
-        and media.get("playing")
-        and media.get("updatedAt")
-        and time.time() - media["updatedAt"] < 10
-    ):
-        return "music"
-    if _running_games(config):
-        return "stats"
-    dev = state.get("dev")
-    stale = float(config.get("vscode_stale_sec", 45))
-    if (
-        dev
-        and dev.get("updatedAt")
-        and time.time() - dev["updatedAt"] < stale
-        and dev.get("focused")
-    ):
-        return "dev"
-    return "idle"
-
-
 async def start(state, config) -> None:
     interval = 0.5
     override_timeout = float(config.get("override_timeout_sec", 300))
-    pending = None
-    pending_count = 0
     override_set_at = None
     last_game_key = None
 
+    # Carousel position + when we last advanced. Seed the index from whatever
+    # scene is showing so the first rotation doesn't jump.
+    try:
+        rotate_idx = ROTATION.index(state.get("scene"))
+    except ValueError:
+        rotate_idx = 0
+    last_rotate = time.monotonic()
+
     while True:
         try:
-            # Publish the game section (cheap, low frequency; set_section
-            # diffs so unchanged state doesn't broadcast).
+            # Publish the game section (cheap, low frequency; set_section diffs
+            # so unchanged state doesn't broadcast). Independent of scene logic.
             matched, label = _find_running_game(config)
-            if matched:
-                game_payload = {"matched": matched, "label": label, "updatedAt": time.time()}
-            else:
-                game_payload = None
+            game_payload = (
+                {"matched": matched, "label": label, "updatedAt": time.time()}
+                if matched
+                else None
+            )
             game_key = (matched, label)
             if game_key != last_game_key:
                 state.set_section("game", game_payload)
                 last_game_key = game_key
 
-            # Hard freeze: skip scene selection entirely while locked, so the
-            # visible scene never changes on its own (and any leftover manual
-            # override just sits inert — no timeout logic needed while locked
-            # since we never reach it below).
+            # Locked = hard freeze: never rotate or switch. Hold the rotate clock
+            # so unlocking gives a full rotate_sec on the current scene instead
+            # of instantly advancing.
             if state.get("locked"):
-                pending = None
-                pending_count = 0
                 override_set_at = None
+                last_rotate = time.monotonic()
                 await asyncio.sleep(interval)
                 continue
 
+            # Manual override (swipe / scene pick) pins a scene until it times
+            # out, then rotation resumes from there.
             ov = state.get("override")
             if ov is not None:
                 if override_set_at is None:
@@ -132,30 +111,24 @@ async def start(state, config) -> None:
                 override_set_at = None
 
             if ov is not None:
+                # Keep the carousel aligned to the chosen scene and hold the
+                # rotate clock so it doesn't lurch forward when the override ends.
+                if ov in ROTATION:
+                    rotate_idx = ROTATION.index(ov)
+                last_rotate = time.monotonic()
                 desired = ov
             else:
-                desired = evaluate(state, config)
+                # Re-read each tick: rotate_sec is editable live from /config
+                # (the shared config dict is updated in place on save).
+                rotate_sec = max(1.0, float(config.get("rotate_sec", 60)))
+                now = time.monotonic()
+                if now - last_rotate >= rotate_sec:
+                    rotate_idx = (rotate_idx + 1) % len(ROTATION)
+                    last_rotate = now
+                desired = ROTATION[rotate_idx]
 
-            current = state.get("scene")
-            if desired != current:
-                # Manual overrides switch immediately; hysteresis only exists to
-                # stop auto-downgrade flicker (e.g. a song ending for a moment),
-                # which shouldn't delay a deliberate user selection.
-                is_downgrade = ov is None and PRIORITY.get(desired, 9) > PRIORITY.get(current, 9)
-                if is_downgrade:
-                    if pending == desired:
-                        pending_count += 1
-                    else:
-                        pending = desired
-                        pending_count = 1
-                    if pending_count >= 2:
-                        state.set_scene(desired, reason="auto", override=ov)
-                        pending = None
-                        pending_count = 0
-                else:
-                    state.set_scene(desired, reason="auto", override=ov)
-                    pending = None
-                    pending_count = 0
+            if desired != state.get("scene"):
+                state.set_scene(desired, reason="rotate", override=ov)
         except Exception as e:
-            log.warning("context eval failed: %s", e)
+            log.warning("context rotate failed: %s", e)
         await asyncio.sleep(interval)

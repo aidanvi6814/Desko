@@ -26,9 +26,54 @@ except ImportError:
 
 HIST = 60
 
+# Login task registered by scripts/setup-lhm.ps1. Because elevation is baked
+# into the task principal, *anyone* who owns the task can start it without a
+# UAC prompt -- which lets the server revive LHM when temps go offline.
+LHM_TASK = "Desko-LibreHardwareMonitor"
+
+
+def _lhm_process_running() -> bool:
+    try:
+        for p in psutil.process_iter(["name"]):
+            if (p.info.get("name") or "").lower() == "librehardwaremonitor.exe":
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _try_start_lhm() -> bool:
+    """Start LHM via its elevated scheduled task. Blocking; call off-loop.
+
+    No-op (False) when LHM is already running (don't spawn a second instance
+    while it's still warming up its sensor table) or when the task was never
+    registered -- that's setup-lhm.ps1 territory, not ours.
+    """
+    import subprocess
+
+    if _lhm_process_running():
+        return False
+    try:
+        rc = subprocess.run(
+            ["schtasks", "/run", "/tn", LHM_TASK],
+            capture_output=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            timeout=10,
+        ).returncode
+    except Exception:
+        return False
+    return rc == 0
+
 
 def _query_lhm(w):
-    """Pick CPU/GPU temp + GPU load from LHM's WMI Sensor table. Blocking."""
+    """Pick CPU/GPU temp + GPU load from LHM's WMI Sensor table. Blocking.
+
+    Returns ``(data, sensor_count)``. ``sensor_count == 0`` is the important
+    case: LHM registered the ``root\\LibreHardwareMonitor`` namespace on a past
+    run (so the namespace lookup succeeds) but the app isn't currently running,
+    so the Sensor table is empty. Callers must treat that as "offline", not as
+    "linked" -- otherwise the server reports success while every temp is null.
+    """
     sensors = w.query("SELECT Name, SensorType, Value FROM Sensor")
     cpu_temp = None
     cpu_temp_fb = None
@@ -50,7 +95,7 @@ def _query_lhm(w):
                 gpu_load = val
     if cpu_temp is None:
         cpu_temp = cpu_temp_fb
-    return {"cpuTempC": cpu_temp, "gpuTempC": gpu_temp, "gpuPercent": gpu_load}
+    return {"cpuTempC": cpu_temp, "gpuTempC": gpu_temp, "gpuPercent": gpu_load}, len(sensors)
 
 
 def _lhm_thread_main(shared, temps_interval, stop_event):
@@ -72,25 +117,75 @@ def _lhm_thread_main(shared, temps_interval, stop_event):
     pythoncom.CoInitialize()
     try:
         w = None
+        online = False   # are sensors actually flowing right now?
         retry_sec = 20.0
-        # Retry namespace acquisition so a late-starting LHM is picked up
-        # without a server restart.
+        last_kick = 0.0  # monotonic ts of the last auto-start attempt
+
+        def _go_offline():
+            """Blank the shared temps so the frontend shows 'LHM offline'."""
+            shared["cpuTempC"] = None
+            shared["gpuTempC"] = None
+            shared["gpuPercent"] = None
+
+        def _kick_lhm():
+            """Auto-start LHM (throttled) so temps come back without the user
+            having to launch it by hand. Runs on this dedicated thread, so
+            the blocking schtasks call can't stall the event loop."""
+            nonlocal last_kick
+            if time.monotonic() - last_kick < 300:
+                return
+            last_kick = time.monotonic()
+            if _try_start_lhm():
+                log.info("LHM offline -- started it via scheduled task '%s'", LHM_TASK)
+
+        # Single loop that (re)acquires the namespace, polls it, and downgrades
+        # to "offline" whenever the Sensor table is empty or a query throws --
+        # so a late-starting, restarted, or closed LHM is tracked live without a
+        # server restart. Acquiring the namespace is NOT enough: it persists in
+        # the WMI repository after LHM exits, so we only report "linked" once a
+        # query returns actual sensors.
         while not stop_event.is_set():
+            if w is None:
+                try:
+                    w = _wmi.WMI(namespace=r"root\LibreHardwareMonitor")
+                except Exception as e:
+                    log.info(
+                        "LibreHardwareMonitor WMI namespace not available yet, "
+                        "retrying in %.0fs (%s)", retry_sec, e,
+                    )
+                    _kick_lhm()
+                    stop_event.wait(retry_sec)
+                    continue
+
             try:
-                w = _wmi.WMI(namespace=r"root\LibreHardwareMonitor")
-                log.info("LibreHardwareMonitor linked (WMI namespace acquired)")
-                break
+                res, count = _query_lhm(w)
             except Exception as e:
-                log.info("LibreHardwareMonitor not running yet, retrying in %.0fs (%s)", retry_sec, e)
-            stop_event.wait(retry_sec)
-        while w is not None and not stop_event.is_set():
-            try:
-                res = _query_lhm(w)
-                shared["cpuTempC"] = res["cpuTempC"]
-                shared["gpuTempC"] = res["gpuTempC"]
-                shared["gpuPercent"] = res["gpuPercent"]
-            except Exception as e:
-                log.debug("LHM query failed: %s", e)
+                # Provider went away (LHM closed) -> drop the handle, re-acquire.
+                if online:
+                    log.info("LibreHardwareMonitor stopped responding (%s); retrying", e)
+                online = False
+                _go_offline()
+                w = None
+                _kick_lhm()
+                stop_event.wait(retry_sec)
+                continue
+
+            if count == 0:
+                # Namespace exists but no sensors -> LHM isn't running.
+                if online:
+                    log.info("LibreHardwareMonitor has no sensors (LHM not running?); showing offline")
+                online = False
+                _go_offline()
+                _kick_lhm()
+                stop_event.wait(retry_sec)
+                continue
+
+            if not online:
+                log.info("LibreHardwareMonitor linked and providing data (%d sensors)", count)
+                online = True
+            shared["cpuTempC"] = res["cpuTempC"]
+            shared["gpuTempC"] = res["gpuTempC"]
+            shared["gpuPercent"] = res["gpuPercent"]
             stop_event.wait(temps_interval)
     finally:
         pythoncom.CoUninitialize()

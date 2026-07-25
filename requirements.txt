@@ -3,6 +3,7 @@
 aiohttp>=3.9
 psutil>=5.9
 qrcode>=7.4
+zeroconf>=0.131   # stable http://desko.local URL (mDNS); optional at runtime
 
 # ---------------------------------------------------------------------------
 # Windows-only extras (media "now playing" + CPU/GPU temps) live in

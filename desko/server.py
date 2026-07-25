@@ -23,6 +23,7 @@ from . import focus as focus_mod
 from .collectors import lyrics as lyrics_mod
 from .collectors import media as media_mod
 from .collectors import sysstats as sysstats_mod
+from .collectors import volume as volume_mod
 from .collectors import vscode as vscode_mod
 from .collectors import weather as weather_mod
 from .state import SCENES, State
@@ -56,6 +57,7 @@ def create_app(state: State, config: dict, demo: bool = False) -> web.Applicatio
     app.router.add_post("/api/config", api_config_post)
     app.router.add_post("/api/vscode", vscode_mod.handle_post)
     app.router.add_post("/api/media/{action}", api_media_action)
+    app.router.add_route("*", "/api/volume", api_volume)
     app.router.add_static("/static/", WEB_ROOT, show_index=False)
 
     app.on_startup.append(on_startup)
@@ -80,6 +82,7 @@ _CONFIG_FIELDS = {
     "game_processes": (list, False),
     "focus_work_min": (int, True),
     "focus_break_min": (int, True),
+    "rotate_sec": (int, False),
     "port": (int, True),
 }
 
@@ -114,6 +117,8 @@ async def api_config_post(request: web.Request) -> web.Response:
                 continue
             if key == "port":
                 val = max(1, min(65535, val))
+            elif key == "rotate_sec":
+                val = max(5, min(3600, val))
             elif key.startswith("focus_"):
                 val = max(1, min(180, val))
         elif typ is str:
@@ -161,17 +166,50 @@ async def api_info(request: web.Request) -> web.Response:
 async def api_media_action(request: web.Request) -> web.Response:
     """Transport control for the active media session.
 
-    `action` must be one of `play_pause`, `next`, `prev`. Returns 204.
+    `action` is one of `play_pause`, `next`, `prev`, or `seek` (with a
+    `?pos=<seconds>` query, used by tapping a synced lyric line). Returns 204.
     CORS-open for LAN convenience; no auth.
     """
     if request.method == "OPTIONS":
         return web.Response(status=204, headers=_cors_headers())
     action = request.match_info.get("action", "")
+    state: State = request.app["state"]
+    if action == "seek":
+        try:
+            pos = float(request.query.get("pos", ""))
+        except ValueError:
+            return web.json_response({"error": "seek needs ?pos=<seconds>"}, status=400, headers=_cors_headers())
+        state.request_media_seek(pos)
+        return web.Response(status=204, headers=_cors_headers())
     if action not in ("play_pause", "next", "prev"):
         return web.json_response({"error": "invalid action"}, status=400, headers=_cors_headers())
-    state: State = request.app["state"]
     state.request_media_command(action)
     return web.Response(status=204, headers=_cors_headers())
+
+
+async def api_volume(request: web.Request) -> web.Response:
+    """System master-volume control.
+
+    ``POST /api/volume?level=<0-100>`` sets the level; ``POST /api/volume?mute=1``
+    toggles mute. CORS-open for LAN convenience; no auth. Returns 204 (or 400
+    if neither param is present / valid).
+    """
+    if request.method == "OPTIONS":
+        return web.Response(status=204, headers=_cors_headers())
+    state: State = request.app["state"]
+    q = request.query
+    if "mute" in q:
+        state.request_volume("mute")
+        return web.Response(status=204, headers=_cors_headers())
+    if "level" in q:
+        try:
+            level = int(float(q["level"]))
+        except ValueError:
+            return web.json_response({"error": "level must be a number"}, status=400, headers=_cors_headers())
+        level = max(0, min(100, level))
+        state.request_volume(f"set:{level}")
+        return web.Response(status=204, headers=_cors_headers())
+    return web.json_response({"error": "need ?level=<0-100> or ?mute=1"}, status=400, headers=_cors_headers())
 
 
 async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
@@ -251,6 +289,8 @@ async def on_startup(app: web.Application) -> None:
         tasks.append(asyncio.create_task(media_mod.start(state, config, app["http_session"])))
         tasks.append(asyncio.create_task(lyrics_mod.start(state, config, app["http_session"])))
         tasks.append(asyncio.create_task(sysstats_mod.start(state, config, app["http_session"])))
+        # System volume (Core Audio via pycaw) — read + set from the Music scene.
+        tasks.append(asyncio.create_task(volume_mod.start(state, config, app["http_session"])))
         # Focus (Pomodoro) timer — server-authoritative state + auto phase flow.
         tasks.append(asyncio.create_task(focus_mod.start(state, config)))
         # Context engine drives auto scene switching (fully wired in M5).

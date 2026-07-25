@@ -6,19 +6,22 @@ import socket
 
 from aiohttp import web
 
+from desko import announce
 from desko.server import create_app
 from desko.state import State
 
 DEFAULT_CONFIG = {
     "host": "0.0.0.0",
     "port": 7777,
+    "mdns_name": "desko",
+    "rotate_sec": 60,
     "weather_city": "",
     "weather_lat": None,
     "weather_lon": None,
     "game_processes": ["valorant-win64-shipping.exe", "cs2.exe"],
     "focus_work_min": 25,
     "focus_break_min": 5,
-    "poll": {"media_sec": 0.3, "sysstats_sec": 1.0, "temps_sec": 3.0, "weather_sec": 1800},
+    "poll": {"media_sec": 0.3, "sysstats_sec": 1.0, "temps_sec": 3.0, "weather_sec": 1800, "volume_sec": 0.5},
     "override_timeout_sec": 300,
     "vscode_stale_sec": 45,
     "lhm_enabled": True,
@@ -56,6 +59,23 @@ def lan_ip() -> str:
         return ip
     except OSError:
         return "127.0.0.1"
+
+
+def lan_mac(ip: str):
+    """MAC of the adapter that owns `ip` -- shown so the user can create a
+    router DHCP reservation (the one fix that pins the numeric IP forever,
+    even for phones too old to resolve mDNS)."""
+    try:
+        import psutil
+
+        for addrs in psutil.net_if_addrs().values():
+            if any(a.family == socket.AF_INET and a.address == ip for a in addrs):
+                for a in addrs:
+                    if a.family == psutil.AF_LINK and a.address:
+                        return a.address.replace("-", ":")
+    except Exception:
+        pass
+    return None
 
 
 def print_qr(url: str) -> None:
@@ -106,10 +126,22 @@ def main() -> None:
     ip = lan_ip()
     port = int(config.get("port", 7777))
     url = f"http://{ip}:{port}"
+
+    # Advertise a DHCP-proof name over mDNS so the saved/pinned URL on the
+    # phone survives the router handing this PC a different IP.
+    mdns_name = str(config.get("mdns_name") or "desko").strip() or "desko"
+    announce.start(lan_ip, port, mdns_name)
+    stable_url = f"http://{mdns_name}.local:{port}"
+
     print("\n  Desko ready")
-    print(f"  Open on your phone: {url}")
-    print("  QR code:")
+    print(f"  Stable URL (save this one): {stable_url}")
+    print(f"  Current IP URL:             {url}")
+    print("  QR code (current IP):")
     print_qr(url)
+    mac = lan_mac(ip)
+    if mac:
+        print(f"  If your phone can't open {mdns_name}.local: give this PC a fixed IP")
+        print(f"  in the router (DHCP reservation for MAC {mac}) and save that URL.")
     print()
     if args.demo:
         print("  (demo mode — fabricated data)\n")

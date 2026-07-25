@@ -48,12 +48,15 @@ class State:
                 "startedAt": time.time(),
             },
             "game": None,
+            "volume": None,
         }
         self._subs: set = set()
         # Thread-safe queue for commands the media thread should execute
-        # (e.g. play/pause/next/prev). The HTTP handler pushes; the media
-        # thread pops on its own event loop.
+        # (e.g. play/pause/next/prev, seek:<sec>). The HTTP handler pushes; the
+        # media thread pops on its own event loop.
         self.media_commands: "queue.Queue[str]" = queue.Queue()
+        # Thread-safe queue for the volume thread (set:<0-100>, mute).
+        self.volume_commands: "queue.Queue[str]" = queue.Queue()
 
     # --- accessors ---------------------------------------------------------
     def snapshot(self) -> dict:
@@ -133,6 +136,33 @@ class State:
             return
         try:
             self.media_commands.put_nowait(action)
+        except Exception:
+            pass
+
+    def request_media_seek(self, position_sec: float) -> None:
+        """Enqueue a seek to an absolute position (seconds) on the media thread.
+
+        Tapping a synced lyric line jumps the track here. Clamped to >=0; the
+        media thread converts to WinRT ticks and calls the GSMTC session.
+        """
+        try:
+            position_sec = max(0.0, float(position_sec))
+        except (TypeError, ValueError):
+            return
+        try:
+            self.media_commands.put_nowait(f"seek:{position_sec:.3f}")
+        except Exception:
+            pass
+
+    def request_volume(self, command: str) -> None:
+        """Enqueue a system-volume command for the dedicated volume thread.
+
+        command is ``set:<0-100>`` or ``mute`` (toggle). Returns immediately.
+        """
+        if not (command == "mute" or command.startswith("set:")):
+            return
+        try:
+            self.volume_commands.put_nowait(command)
         except Exception:
             pass
 
