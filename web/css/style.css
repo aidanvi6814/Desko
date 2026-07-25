@@ -48,8 +48,12 @@ img { display: block; }
    Lives at the dashboard-shell level (not inside .music-scene) so it can
    reach behind the header; shown/hidden by music.js's onEnter/onExit since
    it shouldn't still be visible while looking at another scene. Oversized
-   via a negative inset so the blur filter doesn't reveal sharp edges. */
-.music-bg { position: absolute; inset: -30px; z-index: -1; background-size: cover; background-position: center; filter: blur(40px) saturate(1.5) brightness(.75); opacity: 0; transition: opacity .5s ease; pointer-events: none; }
+   via a negative inset so the blur filter doesn't reveal sharp edges.
+   The image set on #m-bg is a 64px downscaled copy of the cover (see music.js
+   setBgFromArt): background-size:cover upscales it back to full screen, which
+   is itself a heavy blur for free, so the CSS filter only needs a small radius.
+   A full-res blur(40px) here was the single biggest GPU cost on the Realme 3. */
+.music-bg { position: absolute; inset: -30px; z-index: -1; background-size: cover; background-position: center; filter: blur(14px) saturate(1.5) brightness(.75); opacity: 0; transition: opacity .5s ease; pointer-events: none; }
 .music-bg.visible { opacity: 1; }
 .music-bg::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, rgb(17 21 17 / .2), rgb(17 21 17 / .55)); }
 /* `viewport-fit=cover` (index.html) lets content draw under notches/rounded
@@ -70,7 +74,10 @@ img { display: block; }
    (#m-bg) shows through on the music scene; on every other scene there's no
    art behind it so it just reveals the plain --background, visually close
    to the old solid --card anyway. */
-.system-bar { height: 52px; display: flex; align-items: center; justify-content: space-between; padding: 0 max(18px, env(safe-area-inset-left)); border-bottom: 1px solid var(--border); background: rgb(24 29 24 / .55); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); font-size: 11px; letter-spacing: .08em; }
+/* backdrop-filter removed: on the music scene it blurred an already-blurred
+   ambient bg (wasted GPU); a slightly more opaque tint reads the same and is
+   near-free on the Realme 3. */
+.system-bar { height: 52px; display: flex; align-items: center; justify-content: space-between; padding: 0 max(18px, env(safe-area-inset-left)); border-bottom: 1px solid var(--border); background: rgb(24 29 24 / .66); font-size: 11px; letter-spacing: .08em; }
 .fs-btn { display: grid; place-items: center; width: 28px; height: 28px; margin-right: 14px; color: var(--muted-foreground); background: transparent; border: 1px solid var(--border); border-radius: var(--radius); transition: color .15s, border-color .15s, background .15s; }
 .fs-btn:hover, .fs-btn:active { color: var(--primary); border-color: var(--primary); background: rgb(130 245 155 / .05); }
 .fs-btn svg { width: 14px; height: 14px; stroke-width: 1.8; }
@@ -102,9 +109,14 @@ body.is-fs .fs-btn .fs-icon-collapse { display: block; }
    Icon-only: open padlock = AUTO (context engine drives scene switching),
    closed padlock = LOCKED (frozen on whatever scene is showing — see
    context.py). */
-.lock-btn { display: grid; place-items: center; width: 28px; height: 28px; margin-left: 16px; color: var(--muted-foreground); background: transparent; border: 1px solid var(--border); border-radius: var(--radius); transition: color .15s, border-color .15s, background .15s; }
-.lock-btn:hover, .lock-btn:active { border-color: var(--primary); }
-.lock-btn svg { width: 14px; height: 14px; stroke-width: 1.8; }
+.lock-btn, .perf-btn { display: grid; place-items: center; width: 28px; height: 28px; margin-left: 10px; color: var(--muted-foreground); background: transparent; border: 1px solid var(--border); border-radius: var(--radius); transition: color .15s, border-color .15s, background .15s; }
+.perf-btn { margin-left: 16px; }
+.lock-btn:hover, .lock-btn:active, .perf-btn:hover, .perf-btn:active { border-color: var(--primary); }
+.lock-btn svg, .perf-btn svg { width: 14px; height: 14px; stroke-width: 1.8; }
+/* Perf mode active: same amber "a non-default mode is engaged" language the
+   locked padlock uses, so the bar reads consistently. */
+.perf-btn.on { color: var(--accent); border-color: var(--accent); background: rgb(230 173 87 / .08); }
+.perf-btn.on svg { fill: currentColor; }
 .lock-btn .lock-icon-closed { display: none; }
 .lock-btn.locked { color: var(--accent); border-color: var(--accent); background: rgb(230 173 87 / .08); }
 .lock-btn.locked .lock-icon-open { display: none; }
@@ -157,7 +169,7 @@ body.is-fs .fs-btn .fs-icon-collapse { display: block; }
 .music-scene { display: grid; grid-template-columns: minmax(210px, 25%) 1fr; grid-template-rows: 1fr; gap: 10px; overflow: hidden; }
 /* Panels turn into "glass" over the ambient art instead of a flat opaque
    card, so the cover actually shows through behind the track/lyrics text. */
-.music-scene .panel { background: rgb(24 29 24 / .32); backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); }
+.music-scene .panel { background: rgb(24 29 24 / .5); }
 /* Text shadow insurance: with the background this bright now, muted-color
    lyric lines need a bit of their own contrast rather than relying only on
    the panel's darkening. */
@@ -202,6 +214,13 @@ body.is-fs .fs-btn .fs-icon-collapse { display: block; }
 .track .eyebrow .marquee-content { display: inline-flex; will-change: transform; }
 .track .eyebrow .marquee-content.animating { animation: marquee-scroll var(--dur, 14s) linear infinite; }
 .track .eyebrow .track { padding-right: 2em; flex: 0 0 auto; }
+/* The second span exists ONLY to make the scroll seamless (it's the loop tail).
+   It must be shown only while actually scrolling — otherwise a short title that
+   doesn't overflow (so JS never adds .animating) renders both copies side by
+   side as "Dangal   Dangal". Hide the duplicate by default; reveal it only when
+   animating. */
+.marquee-content > .track:nth-child(2) { visibility: hidden; }
+.marquee-content.animating > .track:nth-child(2) { visibility: visible; }
 @keyframes marquee-scroll {
   from { transform: translateX(0); }
   to   { transform: translateX(-50%); }
@@ -209,6 +228,9 @@ body.is-fs .fs-btn .fs-icon-collapse { display: block; }
 @media (prefers-reduced-motion: reduce) {
   .track h2 .marquee-content.animating,
   .track .eyebrow .marquee-content.animating { animation: none; }
+  /* No scroll -> the tail copy would just sit there statically; keep it hidden
+     and let the single copy clip instead. */
+  .marquee-content.animating > .track:nth-child(2) { visibility: hidden; }
 }
 .progress-meta { display: flex; justify-content: space-between; color: var(--muted-foreground); font-size: 10px; margin-top: 2px; }
 .track-bar { height: 6px; }
@@ -219,21 +241,71 @@ body.is-fs .fs-btn .fs-icon-collapse { display: block; }
 .tbtn.primary { width: 48px; height: 48px; color: var(--primary); border-color: var(--primary); background: rgb(130 245 155 / .08); }
 .tbtn.primary svg { font-size: 20px; }
 .tbtn[disabled] { opacity: .35; cursor: not-allowed; }
+
+/* .track.panel needs overflow:visible so the volume popover (positioned
+   above .transport) isn't clipped by the panel's default overflow:hidden.
+   All child elements that need clipping (marquees, progress bar) already
+   have their own overflow:hidden. */
+.track.panel { overflow: visible; }
+
+/* Volume popover: floats above the transport when the speaker button is tapped
+   and auto-hides, so it never permanently steals album-art / layout space.
+   position:absolute keeps it out of flow (the transport row stays put). */
+.transport { position: relative; }
+.volume-pop { position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+  width: min(320px, 80vw); background: var(--card); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 8px 24px rgb(0 0 0 / .55); z-index: 30; }
+.volume-pop[hidden] { display: none; }
+/* Little pointer at the bottom of the popover toward the speaker button. */
+.volume-pop::after { content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  border: 6px solid transparent; border-top-color: var(--border); }
+.vol-btn { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--border); color: var(--muted-foreground); background: none; transition: color .15s, border-color .15s, transform .1s; }
+.vol-btn:hover { color: var(--primary); border-color: var(--primary); }
+.vol-btn:active { transform: scale(.94); }
+.vol-btn svg { width: 18px; height: 18px; }
+.vol-pct { flex: none; min-width: 3.4ch; text-align: right; font-size: 11px; letter-spacing: .06em; color: var(--muted-foreground); }
+.music-scene.has-accent .vol-pct { color: var(--music-accent); }
+/* Range input, restyled for touch. Track is a thin bar; thumb is a round dot
+   sized for a fingertip. Accent-aware in the has-accent case. */
+.vol-slider { flex: 1 1 auto; min-width: 0; -webkit-appearance: none; appearance: none; height: 22px; background: none; cursor: pointer; }
+.vol-slider::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: var(--secondary); }
+.vol-slider::-moz-range-track { height: 6px; border-radius: 3px; background: var(--secondary); }
+.vol-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; margin-top: -5px; border-radius: 50%; background: var(--primary); box-shadow: 0 0 8px rgb(130 245 155 / .5); }
+.vol-slider::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%; background: var(--primary); box-shadow: 0 0 8px rgb(130 245 155 / .5); }
+.music-scene.has-accent .vol-slider::-webkit-slider-thumb { background: var(--music-accent); box-shadow: 0 0 8px var(--music-accent); }
+.music-scene.has-accent .vol-slider::-moz-range-thumb { background: var(--music-accent); box-shadow: 0 0 8px var(--music-accent); }
+
+/* Synced lyric lines are tappable to seek; hint it subtly without shouting. */
+.lyrics-stack p.seekable { cursor: pointer; }
+.lyrics-stack p.seekable:hover { color: var(--foreground); }
 .lyrics { display: flex; flex-direction: column; gap: 8px; min-width: 0; overflow: hidden; position: relative; }
 /* Lyrics stack: scrollable, hidden scrollbar (we provide touch-drag scrolling
    for manual reading; the JS rAF loop re-centers the active line and pauses
    that auto-centering for 5s whenever the user touches the list). */
-.lyrics-stack { flex: 1; overflow-y: auto; overflow-x: hidden; position: relative; padding: 12px 4px; -webkit-overflow-scrolling: touch; scrollbar-width: none; -ms-overflow-style: none; scroll-behavior: auto; }
+.lyrics-stack { flex: 1; overflow-y: auto; overflow-x: hidden; position: relative; padding: 12px 16px; -webkit-overflow-scrolling: touch; scrollbar-width: none; -ms-overflow-style: none; scroll-behavior: auto; }
 .lyrics-stack::-webkit-scrollbar { display: none; width: 0; height: 0; }
 /* Edge fade so lines scroll in and out softly instead of popping at the top
    and bottom of the panel. */
 .lyrics-stack { -webkit-mask: linear-gradient(180deg, transparent 0, #000 14%, #000 86%, transparent 100%); mask: linear-gradient(180deg, transparent 0, #000 14%, #000 86%, transparent 100%); }
-/* All lines have a stable layout size — active emphasis is via GPU transform
-   (scale + glow), NOT font-size, so a long line never grows to 2 lines and
-   shoves the rest of the stack down. The transition is also shorter and
-   sharper than the previous ~.2s font-size growth. */
-.lyrics-stack p { margin: 0; line-height: 1.45; color: var(--muted-foreground); font-size: clamp(16px, 2vw, 24px); padding: .35em 0; transition: color .2s ease-out, opacity .2s ease-out, text-shadow .25s ease-out, transform .3s cubic-bezier(.2,.7,.2,1); transform-origin: left center; }
-.lyrics-stack p.active { color: var(--primary); font-weight: 700; text-shadow: 0 0 18px rgb(130 245 155 / .28); transform: scale(1.08); will-change: transform; }
+/* Active emphasis is a left accent bar + heavier weight + color + glow + a
+   slight font-size bump (NOT a GPU scale), so the active line can never render
+   wider than its box and get clipped by overflow:hidden. overflow-wrap:
+   anywhere keeps any long line (active or not) wrapping cleanly instead of
+   overflowing the panel. The transition is short and sharp. */
+/* text-shadow is intentionally NOT in the transition list: animating a blurred
+   shadow repaints the text every frame of the highlight switch (×several
+   visible lines, 4x/s) and was the main cause of the switch-time jank on the
+   Realme 3. The active glow still appears — it just snaps in with the color
+   change instead of ramping, which is imperceptible at this scale. */
+.lyrics-stack p { margin: 0; line-height: 1.45; color: var(--muted-foreground); font-size: clamp(16px, 2vw, 24px); padding: .5em 0; transition: color .15s ease-out, opacity .15s ease-out, transform .15s cubic-bezier(.2,.7,.2,1); transform-origin: left center; overflow-wrap: anywhere; }
+.lyrics-stack p.active {
+  color: var(--primary);
+  font-weight: 700;
+  font-size: 1.3em;
+  text-shadow: 0 0 18px rgb(130 245 155 / .28);
+  transform: none;
+}
 .lyrics-stack p.plain { color: var(--foreground); opacity: .9; white-space: pre-wrap; line-height: 1.6; padding: .35em 0; }
 .lyrics-stack p.none { color: var(--muted-foreground); font-style: italic; opacity: .55; font-size: 1.5vh; padding: 1em 0; text-align: center; }
 .lyrics-stack p.spacer { display: block; height: .6em; }
@@ -305,7 +377,11 @@ body.is-fs .fs-btn .fs-icon-collapse { display: block; }
    sits comfortably inside the circle instead of overflowing it on short
    landscape screens (which is what "the circle cuts the numbers" was). */
 .focus-ring-wrap { position: relative; flex: 1 1 auto; min-height: 0; align-self: stretch; display: grid; place-items: center; }
-.focus-ring { width: 100%; height: 100%; transform: rotate(-90deg); }
+/* Decorative ring (aria-hidden): its element box fills .focus-ring-wrap and, on
+   short/landscape screens, overlaps the control buttons below it — capturing
+   their taps so Start/Pause/Reset/Skip appeared dead. pointer-events:none lets
+   taps pass through to the buttons (the .focus-time label already does this). */
+.focus-ring { width: 100%; height: 100%; transform: rotate(-90deg); pointer-events: none; }
 .focus-ring-bg { fill: none; stroke: var(--secondary); stroke-width: 4; }
 .focus-ring-fg { fill: none; stroke: var(--primary); stroke-width: 5; stroke-linecap: round; transition: stroke-dashoffset .3s linear, stroke .3s; filter: drop-shadow(0 0 6px rgb(130 245 155 / .4)); }
 .focus-scene.is-break .focus-ring-fg { stroke: var(--accent); filter: drop-shadow(0 0 6px rgb(230 173 87 / .4)); }
@@ -391,8 +467,8 @@ body.is-fs .fs-btn .fs-icon-collapse { display: block; }
 /* small landscape — keep it usable on the realme 3 (720h is tight) */
 @media (max-height: 720px) {
   .clock { font-size: clamp(64px, 14vh, 160px); }
-  .lyrics-stack p { font-size: 16px; }
-  .lyrics-stack p.active { font-size: 26px; }
+  .lyrics-stack p { font-size: 18px; }
+  .lyrics-stack p.active { font-size: 1.4em; }
   .meter strong { font-size: 38px; }
   .repo h2 { font-size: 22px; }
   .brand-copy h1 { font-size: clamp(48px, 9vh, 96px); }
@@ -404,3 +480,90 @@ body.is-fs .fs-btn .fs-icon-collapse { display: block; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
 }
+
+/* ============================================================================
+   PERF MODE  (html.perf)
+   ============================================================================
+   A flat, no-GPU rendering of the same theme for the Realme 3 (Adreno 506):
+   same green-on-dark identity, none of the effects that cost fill-rate.
+   Toggled by #perf-btn (app.js) and applied before first paint by the inline
+   script in index.html. Everything here is a *removal* -- no layout changes --
+   so both modes share one set of boxes and can't drift apart.
+   Must stay LAST in this file so it out-cascades everything above it. */
+
+/* 1. Every looping animation. `animation: none` rather than the .01ms trick the
+      reduced-motion block above uses: that one exists to preserve a11y
+      semantics, whereas here the point is that the animation object never gets
+      created at all. Covers the marquees, .album-orbit, blink, .pulse-dot,
+      the whole launcher desk (lamp/plant/cat/tail) and the scene-in wipe. */
+html.perf *, html.perf *::before, html.perf *::after {
+  animation: none !important;
+  scroll-behavior: auto !important;
+}
+/* The marquee's second .track span is only the seamless-loop tail. JS adds
+   .animating purely from an overflow measurement and knows nothing about perf
+   mode, so without this the tail renders as a static duplicate ("Dangal
+   Dangal"). Same fix the reduced-motion block applies. */
+html.perf .marquee-content.animating > .track:nth-child(2) { visibility: hidden; }
+/* will-change permanently promotes a compositor layer whether or not the title
+   ever overflows -- two layers' worth of texture memory held for nothing. */
+html.perf .track h2 .marquee-content,
+html.perf .track .eyebrow .marquee-content { will-change: auto; }
+
+/* 2. All decorative shadows and filters. The blurred glows are the single
+      biggest per-frame cost: every one re-rasterises its element whenever the
+      text under it changes, which on the lyrics stack is 4x/s. */
+html.perf *, html.perf *::before, html.perf *::after {
+  text-shadow: none !important;
+  box-shadow: none !important;
+  filter: none !important;
+}
+/* `*` doesn't reach these two, so they need saying explicitly. */
+html.perf .vol-slider::-webkit-slider-thumb { box-shadow: none; }
+html.perf .vol-slider::-moz-range-thumb { box-shadow: none; }
+
+/* 3. Ambient music background: drop the blur, keep the art.
+      #m-bg's image is already a 64px downscale of the cover (music.js
+      setBgFromArt) stretched over the viewport by background-size:cover -- the
+      browser's own bilinear upscale of a 64px bitmap *is* a soft blur, for
+      free, so removing the filter costs almost nothing visually. The filter
+      also carried brightness(.75), so the ::after scrim darkens further to
+      make up the contrast the text was relying on. */
+html.perf .music-bg { filter: none; transition: none; }
+html.perf .music-bg::after { background: linear-gradient(180deg, rgb(17 21 17 / .5), rgb(17 21 17 / .72)); }
+/* Translucent panels force the whole music scene to alpha-blend against that
+   full-screen background on every lyric scroll frame. Opaque cards remove the
+   blend entirely -- and read the same once the backdrop is no longer bright. */
+html.perf .music-scene .panel { background: var(--card); }
+
+/* 4. Scanline overlay: a full-viewport pseudo-element at z-index 20 that
+      everything else has to composite through. `display:none` drops the box,
+      not just its paint. */
+html.perf .dashboard-shell::after, html.perf .launcher-shell::after { display: none; }
+
+/* 5. Lyrics stack. The edge-fade mask is re-evaluated on every scroll tick,
+      which is exactly the moment the phone can least afford it. The per-line
+      transition also animates `transform` even though .active only ever sets
+      `transform: none` -- a no-op that still keeps every visible line on the
+      compositor's watch list. Colour alone is kept; it's what actually reads
+      as the karaoke highlight. */
+html.perf .lyrics-stack { -webkit-mask: none; mask: none; }
+html.perf .lyrics-stack p { transition: color .12s linear; }
+
+/* 6. Width transitions re-run layout (not just paint) on every update, and
+      the progress bar updates 4x/s. Snapping is imperceptible at this size. */
+html.perf .bar i { transition: none; }
+html.perf .focus-ring-fg, html.perf .focus-scene.is-break .focus-ring-fg { transition: none; }
+
+/* 7. optimizeLegibility turns on kerning + ligature processing for every text
+      layout. The lyrics stack re-lays-out constantly (the .active line takes a
+      font-size bump), so this is a real CPU cost for no visible gain in a
+      monospace UI read from a metre away. */
+html.perf body { text-rendering: optimizeSpeed; }
+
+/* Frame-time HUD (?fps=1) — built by app.js only when the param is present, so
+   it costs nothing otherwise. Exists to make "is perf mode actually helping?"
+   a number instead of a feeling. */
+.fps-hud { position: fixed; right: 4px; bottom: 4px; z-index: 999; padding: 3px 7px;
+  background: rgb(0 0 0 / .72); color: var(--primary); font: 700 11px/1.3 ui-monospace, monospace;
+  letter-spacing: .04em; pointer-events: none; }

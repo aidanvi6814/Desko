@@ -12,6 +12,26 @@
   <link rel="icon" type="image/png" href="/static/favicon.png" sizes="48x48">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-180.png">
   <link rel="stylesheet" href="/static/css/style.css">
+  <!-- Perf mode, decided BEFORE first paint so reloading never flashes the
+       blurred music background before the flat theme takes over.
+       Precedence: ?perf=1|0  >  stored choice  >  OS reduced-motion default.
+       The URL form also writes through to storage, which matters because
+       localStorage is per-origin: http://desko.local:7777 and http://<ip>:7777
+       are two separate stores, so a bookmark is the only way to carry the
+       setting across when mDNS falls back to the raw IP. -->
+  <script>
+    (function () {
+      var KEY = "desko:perf", v = null;
+      try {
+        var q = /[?&]perf=([01])/.exec(location.search);
+        if (q) { v = q[1]; localStorage.setItem(KEY, v); }
+        else { v = localStorage.getItem(KEY); }
+      } catch (e) {}
+      var on = v === "1" || (v == null && window.matchMedia &&
+        matchMedia("(prefers-reduced-motion: reduce)").matches);
+      if (on) document.documentElement.classList.add("perf");
+    })();
+  </script>
 </head>
 <body>
   <main class="dashboard-shell" id="dashboard">
@@ -26,7 +46,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="fs-icon-collapse"><path d="M10 4v6H4 M14 4v6h6 M10 20v-6H4 M14 20v-6h6"/></svg>
       </button>
       <div class="wordmark">
-        DESKO <small>OS 0.8.4</small>
+        DESKO <small>OS 0.8.5</small>
       </div>
       <div class="system-center">
         <span class="online" id="sb-link"><i></i> <span id="sb-link-text">LINKED</span></span>
@@ -45,6 +65,9 @@
           <small id="sb-batt-pct">—</small>
         </span>
       </div>
+      <button class="perf-btn" id="perf-btn" type="button" aria-pressed="false" title="Performance mode — drops blur, glows and looping animation for a smoother frame rate" aria-label="Toggle performance mode">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      </button>
       <button class="lock-btn" id="lock-btn" type="button" title="Lock the current scene / resume auto-switching">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" class="lock-icon-open"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" class="lock-icon-closed"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
@@ -118,6 +141,18 @@
             <button class="tbtn" id="t-next" type="button" aria-label="Next track">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg>
             </button>
+            <button class="tbtn" id="t-vol-btn" type="button" aria-label="Volume" aria-expanded="false" hidden>
+              <svg viewBox="0 0 24 24" fill="currentColor" id="t-vol-btn-icon" aria-hidden="true"><path d="M3 10v4h4l5 5V5L7 10H3z"/><path d="M16 8a5 5 0 0 1 0 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </button>
+            <!-- Volume popover: revealed by the speaker button, auto-hides after
+                 you adjust, so it doesn't permanently occupy the layout. -->
+            <div class="volume-pop" id="m-volume" hidden>
+              <button class="vol-btn" id="t-mute" type="button" aria-label="Mute / unmute">
+                <svg viewBox="0 0 24 24" fill="currentColor" id="t-mute-icon" aria-hidden="true"><path d="M3 10v4h4l5 5V5L7 10H3z"/><path d="M16 8a5 5 0 0 1 0 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M18.5 5.5a9 9 0 0 1 0 13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+              </button>
+              <input class="vol-slider" id="t-vol" type="range" min="0" max="100" value="0" step="1" aria-label="System volume">
+              <span class="vol-pct" id="m-vol-pct">—</span>
+            </div>
           </div>
         </div>
         </div>

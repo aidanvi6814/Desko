@@ -2,13 +2,15 @@
 // Plain script (no modules) for old Chromium on the realme 3.
 window.Desko = (function () {
   var SCENES = ["idle", "music", "stats", "dev", "focus"];
-  var state = { scene: "idle", override: null, locked: false, info: null, media: null, lyrics: null, sys: null, weather: null, dev: null, game: null, focus: null };
+  var state = { scene: "idle", override: null, locked: false, info: null, media: null, lyrics: null, sys: null, weather: null, dev: null, game: null, focus: null, volume: null };
   var info = { hostname: "—", ip: "—" }; // from /api/info
   var scenes = {};
   var launcher = null;            // launcher module (optional)
   var active = null;              // current scene name
   var urlOverride = null;         // ?scene=...
   var launcherOpen = false;       // UI flag
+  var launcherOpenedAt = 0;       // ms; guards the home screen against the same
+                                  // double-tap's synthesized click closing it
   var ws = null;
   var backoff = 1000;
   var pingTimer = null;
@@ -68,6 +70,10 @@ window.Desko = (function () {
     if (section === "locked") { syncLockIndicator(); }
     if (section === "media" || section === "lyrics") {
       if (scenes.music && scenes.music.onStateChange) try { scenes.music.onStateChange(state); } catch (e) {}
+    } else if (section === "volume") {
+      // Volume changes shouldn't re-run the track/marquee logic in
+      // onStateChange, so route them to the music scene's dedicated handler.
+      if (scenes.music && scenes.music.onVolume) try { scenes.music.onVolume(state); } catch (e) {}
     } else if (section === "sys" || section === "game") {
       if (scenes.stats && scenes.stats.onStateChange) try { scenes.stats.onStateChange(state); } catch (e) {}
     } else if (section === "weather") {
@@ -246,6 +252,50 @@ window.Desko = (function () {
   document.addEventListener("fullscreenchange", syncFsState);
   document.addEventListener("webkitfullscreenchange", syncFsState);
 
+  // --- Perf mode ------------------------------------------------------------
+  // Flat, no-GPU rendering of the theme (see the html.perf block in style.css).
+  // The class is put on <html> before first paint by the inline script in
+  // index.html; this only handles toggling afterwards.
+  //
+  // Stored per-device in localStorage rather than in config.json, because perf
+  // mode describes the screen doing the rendering, not the PC: a desktop
+  // browser opening the same dashboard shouldn't inherit the phone's setting.
+  // The trade-off is that localStorage is per-origin, so desko.local and the
+  // raw IP each keep their own flag -- ?perf=1 / ?perf=0 exists to force it.
+  var PERF_KEY = "desko:perf";
+  function perfOn() { return document.documentElement.classList.contains("perf"); }
+  function setPerf(on) {
+    document.documentElement.classList.toggle("perf", !!on);
+    try { localStorage.setItem(PERF_KEY, on ? "1" : "0"); } catch (e) {}
+    syncPerfIndicator();
+  }
+  function syncPerfIndicator() {
+    var b = el("perf-btn"); if (!b) return;
+    var on = perfOn();
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  // --- Frame-time HUD (?fps=1) ---------------------------------------------
+  // Opt-in only. Reports the rolling worst frame time alongside the average,
+  // because on a weak GPU the average stays respectable while the occasional
+  // 200ms hitch is what you actually notice.
+  function startFpsHud() {
+    var node = document.createElement("div");
+    node.className = "fps-hud";
+    document.body.appendChild(node);
+    var last = 0, frames = 0, worst = 0, acc = 0;
+    (function loop(t) {
+      if (last) { var dt = t - last; acc += dt; frames++; if (dt > worst) worst = dt; }
+      last = t;
+      if (acc >= 500) {
+        node.textContent = Math.round(1000 / (acc / frames)) + " FPS · max " + Math.round(worst) + "ms";
+        acc = 0; frames = 0; worst = 0;
+      }
+      requestAnimationFrame(loop);
+    })(0);
+  }
+
   // --- Gestures (swipe, double-tap) ---------------------------------------
   var touchStartX = null, touchStartY = null, lastTap = 0;
   function onTouchStart(e) {
@@ -258,7 +308,14 @@ window.Desko = (function () {
     var dx = t.clientX - touchStartX, dy = t.clientY - touchStartY;
     // On the minimal home screen, any tap or swipe just returns to the
     // dashboard (scene selection happens by swiping on the dashboard itself).
-    if (launcherOpen) { touchStartX = null; closeLauncher(); return; }
+    if (launcherOpen) {
+      touchStartX = null;
+      // Ignore the tap that belongs to the same double-tap that just opened the
+      // home screen (its synthesized click/second-tap arrives ~immediately);
+      // only a deliberate later tap should dismiss it.
+      if (Date.now() - launcherOpenedAt >= 500) closeLauncher();
+      return;
+    }
     if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.5) {
       send({ type: "cycle", dir: dx > 0 ? -1 : 1 });
       touchStartX = null; return;
@@ -310,13 +367,19 @@ window.Desko = (function () {
     // Minimal home screen: a click (desktop) anywhere returns to the dashboard.
     // Touch devices are handled in onTouchEnd (any tap/swipe dismisses).
     var launcherEl = el("launcher");
-    if (launcherEl) launcherEl.addEventListener("click", function () { closeLauncher(); });
+    if (launcherEl) launcherEl.addEventListener("click", function () {
+      // Guard against the synthesized click from the opening double-tap (see
+      // launcherOpenedAt) closing the home screen the instant it appears.
+      if (Date.now() - launcherOpenedAt < 500) return;
+      closeLauncher();
+    });
   }
 
   // --- Public launcher controls (used by idle scene's double-tap) ----------
   function openLauncher() {
     var l = el("launcher"); if (!l) return;
     launcherOpen = true;
+    launcherOpenedAt = Date.now();
     l.hidden = false;
     if (launcher && launcher.onEnter) { try { launcher.onEnter(state); } catch (e) {} }
   }
@@ -363,6 +426,19 @@ window.Desko = (function () {
       });
       fsBtn.addEventListener("touchend", function (e) { e.stopPropagation(); }, { passive: true });
     }
+    // Perf-mode button (system bar, top-right next to the padlock).
+    var perfBtn = el("perf-btn");
+    if (perfBtn) {
+      perfBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        setPerf(!perfOn());
+      });
+      // Same guard fs-btn/lock-btn use: a tap here must not also count towards
+      // the document-level double-tap-anywhere gesture.
+      perfBtn.addEventListener("touchend", function (e) { e.stopPropagation(); }, { passive: true });
+    }
+    syncPerfIndicator();
+    if (p.get("fps") === "1") startFpsHud();
     if (launcherOpen) {
       var l = el("launcher");
       if (l) l.hidden = false;
@@ -373,6 +449,14 @@ window.Desko = (function () {
     setInterval(fetchInfo, 30000);
     connect();
     setInterval(tick, 250);
+    // Some Android WebViews/browsers throttle timers and defer compositing
+    // while the page sits untouched or briefly backgrounded, which stalls the
+    // lyric highlight/scroll until you touch the screen. Force an immediate
+    // resync the moment the page becomes visible again so it snaps to the
+    // correct position instead of waiting for the next 250ms tick.
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible") { try { tick(); } catch (e) {} }
+    });
   }
 
   return {
@@ -382,6 +466,8 @@ window.Desko = (function () {
     info: info,
     scenes: scenes,
     toggleFullscreen: toggleFullscreen,
+    setPerf: setPerf,
+    perfOn: perfOn,
     openLauncher: openLauncher,
     closeLauncher: closeLauncher,
     isLauncherOpen: isLauncherOpen,
