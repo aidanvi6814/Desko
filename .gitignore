@@ -13,14 +13,20 @@ cache/
 # secret calendar .ics URL, so keep it out of the repo.
 config.json
 
-# Personal scratch notes
+# Runtime log — desko-hidden.vbs has no console, so it redirects the server's
+# stdout/stderr here. Grows with every run; never belongs in the repo.
+*.log
+
+# Personal scratch notes / debug screenshots
 bugs.txt
+/image.png
 
 # Experimental alternate frontend (not part of the shipping app)
 new ui/
 
-# Editor / OS
+# Editor / OS / agent tooling
 .vscode/
 .idea/
+.claude/settings.local.json
 .DS_Store
 Thumbs.db
