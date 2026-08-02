@@ -14,6 +14,10 @@ a Pomodoro timer, pushed from your PC to any old phone on your WiFi.
 [![No build step](https://img.shields.io/badge/build%20step-none-82f59b?style=flat-square)](#how-it-works)
 [![License](https://img.shields.io/badge/license-Noncommercial-blue?style=flat-square)](LICENSE)
 
+<br>
+
+<img src="docs/images/hero-music.jpg" width="880" alt="An old phone on a desk running Desko, showing the Music scene with time-synced lyrics">
+
 </div>
 
 ---
@@ -47,6 +51,12 @@ padlock to pin one.
         ambient background = the album art, blurred, filling the whole screen
 ```
 
+<div align="center">
+  <img src="docs/images/desk-setup.jpg" width="620" alt="Desko running on a phone propped in front of a monitor and keyboard">
+  <br>
+  <sub>An old realme 3 earning its keep. Double-tap the clock to open the launcher.</sub>
+</div>
+
 Everything degrades gracefully. No media playing, no LibreHardwareMonitor, no VS Code, and
 those widgets just hide. Nothing crashes, nothing shows a dead `-`.
 
@@ -59,6 +69,23 @@ those widgets just hide. Nothing crashes, nothing shows a dead `-`.
 | 📊 | **Stats** | CPU/GPU load and temperature, RAM, network up/down, 60-second sparklines, session timer, game name when a configured process is running |
 | 💻 | **Dev** | Workspace, branch, ahead/behind, changed files, cursor position, **last commit**, **today's commits and lines**. Live from VS Code, and from git alone once the editor is closed |
 | 🍅 | **Focus** | Pomodoro countdown ring, work/break auto-flow, cycle counter, adjustable lengths. Server-side, so it's identical on every device and survives reloads |
+
+<table>
+  <tr>
+    <td width="33%" align="center">
+      <img src="docs/images/scene-music.jpg" alt="Music scene showing album art and synced lyrics">
+      <br><sub><b>Music</b><br>ambient album art, synced lyrics</sub>
+    </td>
+    <td width="33%" align="center">
+      <img src="docs/images/scene-stats.jpg" alt="Stats scene showing CPU, GPU, RAM and sparklines">
+      <br><sub><b>Stats</b><br>load, temps, 60s sparklines</sub>
+    </td>
+    <td width="33%" align="center">
+      <img src="docs/images/scene-idle.jpg" alt="Idle scene showing the clock and weather">
+      <br><sub><b>Idle</b><br>clock, weather, link and uptime</sub>
+    </td>
+  </tr>
+</table>
 
 <div align="center">
 

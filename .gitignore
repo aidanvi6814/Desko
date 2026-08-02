@@ -21,6 +21,11 @@ config.json
 bugs.txt
 /image.png
 
+# Full-resolution camera originals for the README photos. The committed copies
+# in docs/images/ are resized and stripped of EXIF; these are 7MB each and git
+# would keep every version of them forever.
+docs/images/_originals/
+
 # Experimental alternate frontend (not part of the shipping app)
 new ui/
 
