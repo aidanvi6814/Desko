@@ -21,9 +21,12 @@ DEFAULT_CONFIG = {
     "game_processes": ["valorant-win64-shipping.exe", "cs2.exe"],
     "focus_work_min": 25,
     "focus_break_min": 5,
-    "poll": {"media_sec": 0.3, "sysstats_sec": 1.0, "temps_sec": 3.0, "weather_sec": 1800, "volume_sec": 0.5},
+    "poll": {"media_sec": 0.3, "sysstats_sec": 1.0, "temps_sec": 3.0, "weather_sec": 1800, "volume_sec": 0.5, "git_sec": 10},
     "override_timeout_sec": 300,
     "vscode_stale_sec": 45,
+    # Repo the Dev scene falls back to when VS Code isn't reporting. Empty =
+    # follow whatever workspace the extension last opened.
+    "git_repo_path": "",
     "lhm_enabled": True,
 }
 

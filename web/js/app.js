@@ -13,8 +13,11 @@ window.Desko = (function () {
                                   // double-tap's synthesized click closing it
   var ws = null;
   var backoff = 1000;
+  var reconnectTimer = null;
   var pingTimer = null;
   var pingSent = 0;
+  var lastPongAt = 0;      // ms; 0 = nothing heard back yet on this socket
+  var lastTickAt = 0;      // ms; used to detect a suspended/throttled page
   var lastLinkMs = null;
   var lastUptimeTick = 0;
   var clockOffsetMs = 0;   // estimated (serverNow - clientNow), refreshed each pong
@@ -66,7 +69,12 @@ window.Desko = (function () {
     } else {
       state[section] = data;
     }
-    if (section === "info") { info.hostname = state.info.hostname || "—"; info.ip = state.info.ip || "—"; renderSysBar(); }
+    if (section === "info") {
+      info.hostname = state.info.hostname || "—";
+      info.ip = state.info.ip || "—";
+      noteServerStart(state.info.startedAt);
+      renderSysBar();
+    }
     if (section === "locked") { syncLockIndicator(); }
     if (section === "media" || section === "lyrics") {
       if (scenes.music && scenes.music.onStateChange) try { scenes.music.onStateChange(state); } catch (e) {}
@@ -89,7 +97,11 @@ window.Desko = (function () {
     if (msg.type === "snapshot") {
       var d = msg.data || {};
       for (var k in d) if (Object.prototype.hasOwnProperty.call(d, k)) state[k] = d[k];
-      if (state.info) { info.hostname = state.info.hostname || "—"; info.ip = state.info.ip || "—"; }
+      if (state.info) {
+        info.hostname = state.info.hostname || "—";
+        info.ip = state.info.ip || "—";
+        noteServerStart(state.info.startedAt);
+      }
       renderSysBar();
       syncLockIndicator();
       applyScene(state.scene, "auto", state.override);
@@ -102,6 +114,7 @@ window.Desko = (function () {
     } else if (msg.type === "scene") {
       applyScene(msg.scene, msg.reason, msg.override);
     } else if (msg.type === "pong") {
+      lastPongAt = Date.now();   // liveness proof; see startPing / checkLink
       if (typeof msg.t === "number") {
         var nowMs = Date.now();
         lastLinkMs = nowMs - msg.t;
@@ -120,6 +133,11 @@ window.Desko = (function () {
 
   // --- WebSocket ------------------------------------------------------------
   function connect() {
+    // Never stack sockets: a manual reconnect (see dropSocket / checkLink) can
+    // race the scheduled one, and two live sockets means two snapshots and
+    // double the traffic on a phone that can least afford it.
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
     var proto = location.protocol === "https:" ? "wss:" : "ws:";
     var url = proto + "//" + location.host + "/ws";
     try { ws = new WebSocket(url); } catch (e) { scheduleReconnect(); return; }
@@ -140,17 +158,62 @@ window.Desko = (function () {
     var t = el("sb-link-text"); if (t) t.textContent = "OFFLINE";
     if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
   }
-  function scheduleReconnect() { setTimeout(connect, backoff); backoff = Math.min(backoff * 1.7, 5000); }
+  function scheduleReconnect() {
+    if (reconnectTimer) return;
+    reconnectTimer = setTimeout(function () { reconnectTimer = null; connect(); }, backoff);
+    backoff = Math.min(backoff * 1.7, 5000);
+  }
 
-  // --- Latency ping ---------------------------------------------------------
+  // Tear down a socket we believe is wedged. Wi-Fi power-save on the phone can
+  // drop the TCP connection with neither side seeing a FIN: readyState stays
+  // OPEN, onclose never fires, nothing arrives — and because music.js keeps
+  // interpolating the last known playhead, the dashboard looks alive while the
+  // track and lyrics silently go stale. Detaching the handlers first means the
+  // dead socket can't deliver a late message or a late onclose into the new
+  // connection's lifecycle.
+  function dropSocket() {
+    if (ws) {
+      try {
+        ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null;
+        ws.close();
+      } catch (e) {}
+      ws = null;
+    }
+    onDisconnect();
+    backoff = 1000;
+    scheduleReconnect();
+  }
+
+  // --- Latency ping / link health ------------------------------------------
+  // The ping was previously fire-and-forget: it measured RTT when a pong came
+  // back but never noticed one that didn't, so a half-open socket read as
+  // "LINKED" forever. Now an unanswered ping is the liveness signal.
+  var PONG_TIMEOUT_MS = 15000;
   function startPing() {
     if (pingTimer) clearInterval(pingTimer);
+    lastPongAt = Date.now();
     pingSent = Date.now();
     send({ type: "ping", t: pingSent });
     pingTimer = setInterval(function () {
+      if (Date.now() - lastPongAt > PONG_TIMEOUT_MS) { dropSocket(); return; }
       pingSent = Date.now();
       send({ type: "ping", t: pingSent });
     }, 5000);
+  }
+
+  // Called after the ticker notices it was suspended (see tick). Everything on
+  // screen is stale by the length of the freeze, and the socket may or may not
+  // have survived it, so make it prove itself now rather than waiting up to 5s
+  // for the next scheduled ping.
+  function checkLink() {
+    if (!ws || ws.readyState > 1) { backoff = 1000; scheduleReconnect(); return; }
+    if (ws.readyState !== 1) return;                      // still CONNECTING
+    // A freeze longer than the pong window is indistinguishable from a dead
+    // socket from here, and reconnecting is cheap (one handshake + a fresh
+    // snapshot that resyncs every section), so prefer the certain path.
+    if (Date.now() - lastPongAt > PONG_TIMEOUT_MS) { dropSocket(); return; }
+    pingSent = Date.now();
+    send({ type: "ping", t: pingSent });
   }
   function renderLink() {
     var e = el("i-link"); if (!e) return;
@@ -158,6 +221,27 @@ window.Desko = (function () {
   }
 
   // --- /api/info (hostname, ip, uptime) ------------------------------------
+  // Server start time, as a SERVER epoch in seconds. The "PC UPTIME" readout
+  // used to be measured from when this script loaded, which made it the phone
+  // tab's lifetime -- it reset on every reload and had nothing to do with the
+  // PC. Preferred source is state.info.startedAt (arrives with the ws
+  // snapshot, exact); /api/info's uptime_sec is the fallback for the moment
+  // before the socket is up. Rendering corrects for clock skew the same way
+  // the media position does, so a phone with a wrong system clock still shows
+  // the real number.
+  var serverStartedAt = null;
+  function noteServerStart(startedAt) {
+    if (typeof startedAt === "number" && startedAt > 0) serverStartedAt = startedAt;
+  }
+  function serverUptimeSec() {
+    if (serverStartedAt == null) return null;
+    return Math.max(0, (Date.now() + clockOffsetMs) / 1000 - serverStartedAt);
+  }
+  function renderUptime() {
+    var u = el("i-uptime"); if (!u) return;
+    var up = serverUptimeSec();
+    u.textContent = up == null ? "—" : fmtUptime(up);
+  }
   function fetchInfo() {
     fetch("/api/info", { headers: { "Accept": "application/json" } })
       .then(function (r) { return r.ok ? r.json() : null; })
@@ -165,6 +249,10 @@ window.Desko = (function () {
         if (!j) return;
         info.hostname = j.hostname || "—";
         info.ip = j.ip || "—";
+        // uptime_sec is relative to *now*, so convert to an absolute start.
+        if (serverStartedAt == null && typeof j.uptime_sec === "number") {
+          noteServerStart(Date.now() / 1000 - j.uptime_sec);
+        }
         renderSysBar();
       })
       .catch(function () {});
@@ -177,11 +265,12 @@ window.Desko = (function () {
     var pad = function (n) { return n < 10 ? "0" + n : "" + n; };
     return pad(h) + ":" + pad(m) + ":" + pad(sec);
   }
+
   function renderSysBar() {
     var h = el("sb-hostname"); if (h) h.textContent = (info.hostname || "—").toUpperCase();
     var i = el("sb-ip"); if (i) i.textContent = info.ip || "—";
     var clk = el("sb-clock"); if (clk) clk.textContent = hhmmNow();
-    var u = el("i-uptime"); if (u) u.textContent = fmtUptime((Date.now() - bootStart) / 1000);
+    renderUptime();
   }
   function hhmmNow() {
     var d = new Date();
@@ -189,7 +278,6 @@ window.Desko = (function () {
     var mm = String(d.getMinutes()).padStart(2, "0");
     return hh + ":" + mm;
   }
-  var bootStart = Date.now();
 
   // --- Phone battery (Battery Status API) ----------------------------------
   // Real battery for the device the dashboard runs on (the phone), shown in the
@@ -336,15 +424,29 @@ window.Desko = (function () {
   }
 
   // --- Global ticker (4x/s) -------------------------------------------------
+  // A gap this much larger than the 250ms interval means the page was
+  // suspended or throttled, not merely busy: Android stops timers and rAF when
+  // the screen sleeps, when the browser is backgrounded, and under battery
+  // saver — and ColorOS does it aggressively even with keep-awake holding the
+  // display on. The old code relied on visibilitychange alone, which never
+  // fires for a throttle-to-a-crawl and doesn't tell us the socket also died
+  // in the meantime, so the dashboard sat on stale data until a touch woke it.
+  var FREEZE_GAP_MS = 2000;
   function tick() {
+    var now = Date.now();
+    var gap = lastTickAt ? now - lastTickAt : 0;
+    lastTickAt = now;
+    if (gap > FREEZE_GAP_MS) checkLink();
+
     if (launcherOpen) { renderLauncherTick(); return; }
     if (active && scenes[active] && scenes[active].onTick) {
-      try { scenes[active].onTick(state, Date.now()); } catch (e) {}
+      // Scenes render from Date.now(), so this call alone re-syncs the
+      // playhead, lyric highlight and countdown after a freeze.
+      try { scenes[active].onTick(state, now); } catch (e) {}
     }
-    var now = Date.now();
     if (now - lastUptimeTick > 1000) {
       lastUptimeTick = now;
-      var u = el("i-uptime"); if (u) u.textContent = fmtUptime((now - bootStart) / 1000);
+      renderUptime();
       var clk = el("sb-clock"); if (clk) clk.textContent = hhmmNow();
     }
   }

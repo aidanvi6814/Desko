@@ -336,26 +336,28 @@ def _publish_if_current(state, track_key, data) -> None:
         state.set_section("lyrics", data)
 
 
-async def fetch(state, session, track_key, artist, title, album, duration_sec) -> bool:
+async def fetch(state, session, track_key, artist, title, album, duration_sec) -> None:
     """Fetch + publish lyrics for a track.
 
-    Returns True when the result is *definitive* (lyrics found, or every
-    provider confirmed it has none), False when at least one provider failed
-    transiently and nothing was found — the caller retries those. Only
-    definitive results are cached, so an outage can't get baked in as
-    "no lyrics".
+    Publishes nothing when every provider failed *transiently* (timeout, 5xx),
+    which is what drives retries: the media collector re-calls this while the
+    ``lyrics`` section doesn't yet match the playing track (media.py §3). A
+    definitive "this song has no lyrics" IS published (``found: false``) and
+    cached, so it settles on the first attempt instead of being retried for the
+    rest of the song. That published state is the single retry signal — this
+    used to also return a bool saying the same thing, which no caller read.
     """
     manual = _load_manual(artist, title)
     if manual is not None:
         data = {"trackKey": track_key, "synced": manual["synced"],
                 "plain": manual["plain"], "found": True}
         _publish_if_current(state, track_key, data)
-        return True
+        return
 
     cached = _load_cache(track_key)
     if cached is not None:
         _publish_if_current(state, track_key, cached)
-        return True
+        return
 
     result, transient = None, False
     variants = _variants(artist, title)
@@ -398,13 +400,15 @@ async def fetch(state, session, track_key, artist, title, album, duration_sec) -
                 "plain": result["plain"], "found": True}
         _save_cache(track_key, data)
         _publish_if_current(state, track_key, data)
-        return True
+        return
 
     if transient:
+        # Publish nothing and cache nothing: the phone keeps showing "loading"
+        # and the media collector tries again shortly. An outage must never get
+        # baked in as "no lyrics".
         log.warning("lyrics: no provider answered for %r (will retry)", track_key)
-        return False
+        return
 
     data = {"trackKey": track_key, "synced": None, "plain": None, "found": False}
     _save_cache(track_key, data)
     _publish_if_current(state, track_key, data)
-    return True

@@ -340,7 +340,7 @@ Desko.scenes.music = (function () {
         scrollCurrent = targetTop;
         programmatic = true;
         stack.scrollTop = targetTop;
-      } else if (rafHandle == null && Math.abs(targetTop - scrollCurrent) > 0.5) {
+      } else if (Math.abs(targetTop - scrollCurrent) > 0.5) {
         startGlide();
       }
     }
@@ -369,8 +369,14 @@ Desko.scenes.music = (function () {
     }
     rafHandle = requestAnimationFrame(glideStep);
   }
+  // Deliberately NOT gated on `rafHandle == null`. Android drops pending rAF
+  // work when the page is suspended (screen off, backgrounded), and a callback
+  // that never runs leaves a stale non-null handle behind — which made this a
+  // permanent no-op, so the lyrics would keep highlighting but never scroll the
+  // active line back into view. Cancelling first makes re-arming always safe.
   function startGlide() {
-    if (rafHandle == null) rafHandle = requestAnimationFrame(glideStep);
+    if (rafHandle != null) cancelAnimationFrame(rafHandle);
+    rafHandle = requestAnimationFrame(glideStep);
   }
   function stopGlide() {
     if (rafHandle != null) { cancelAnimationFrame(rafHandle); rafHandle = null; }

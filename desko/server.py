@@ -20,6 +20,7 @@ from aiohttp import web
 
 from . import context as context_mod
 from . import focus as focus_mod
+from .collectors import git as git_mod
 from .collectors import lyrics as lyrics_mod
 from .collectors import media as media_mod
 from .collectors import sysstats as sysstats_mod
@@ -238,7 +239,7 @@ async def _handle_client_msg(state: State, ws, raw: str) -> None:
         scene = msg.get("scene")
         if scene is not None and scene not in SCENES:
             return
-        state.set_override(scene, 300)
+        state.set_override(scene)
     elif t == "cycle":
         direction = int(msg.get("dir", 1))
         if direction not in (1, -1):
@@ -250,7 +251,7 @@ async def _handle_client_msg(state: State, ws, raw: str) -> None:
         if not locked:
             # Unlocking hands control straight back to the context engine —
             # drop any leftover manual override so it doesn't sit there stale.
-            state.set_override(None, 0)
+            state.set_override(None)
     elif t == "focus":
         focus_mod.apply(state, msg)
     elif t == "ping":
@@ -291,6 +292,9 @@ async def on_startup(app: web.Application) -> None:
         tasks.append(asyncio.create_task(sysstats_mod.start(state, config, app["http_session"])))
         # System volume (Core Audio via pycaw) — read + set from the Music scene.
         tasks.append(asyncio.create_task(volume_mod.start(state, config, app["http_session"])))
+        # Git fallback for the Dev scene: watches the VS Code extension's
+        # heartbeat and takes over reading the repo when the editor is closed.
+        tasks.append(asyncio.create_task(git_mod.start(state, config, app["http_session"])))
         # Focus (Pomodoro) timer — server-authoritative state + auto phase flow.
         tasks.append(asyncio.create_task(focus_mod.start(state, config)))
         # Context engine drives auto scene switching (fully wired in M5).

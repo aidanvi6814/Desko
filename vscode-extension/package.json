@@ -2,7 +2,7 @@
   "name": "desko-status",
   "displayName": "Desko Status",
   "description": "Reports VS Code workspace + git status to the Desko desk dashboard.",
-  "version": "0.0.2",
+  "version": "0.1.0",
   "publisher": "desko",
   "engines": { "vscode": "^1.80.0" },
   "categories": ["Other"],

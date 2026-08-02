@@ -57,6 +57,12 @@ class State:
         self.media_commands: "queue.Queue[str]" = queue.Queue()
         # Thread-safe queue for the volume thread (set:<0-100>, mute).
         self.volume_commands: "queue.Queue[str]" = queue.Queue()
+        # Wall-clock of the last POST /api/vscode, i.e. proof the editor
+        # extension is alive. Deliberately NOT a section: it moves on every
+        # heartbeat, so putting it in _data would broadcast the whole dev
+        # section to the phone every few seconds to say "nothing changed".
+        # The git collector reads it to decide when VS Code has gone away.
+        self.dev_seen_at: float = 0.0
 
     # --- accessors ---------------------------------------------------------
     def snapshot(self) -> dict:
@@ -105,8 +111,14 @@ class State:
         )
         return scene_changed
 
-    def set_override(self, scene: Optional[str], timeout_sec: float) -> None:
-        """Manual override (scene name) or resume auto (None)."""
+    def set_override(self, scene: Optional[str]) -> None:
+        """Manual override (scene name) or resume auto (None).
+
+        Deliberately takes no timeout: how long an override survives is the
+        rotation engine's business, and it reads ``override_timeout_sec`` from
+        config itself (see context.py). An argument here would look
+        configurable while changing nothing.
+        """
         if scene is None:
             self._data["override"] = None
             # context engine will re-evaluate; for now broadcast clearing override

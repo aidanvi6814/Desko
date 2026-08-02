@@ -363,8 +363,16 @@ body.is-fs .fs-btn .fs-icon-collapse { display: block; }
 .changes li b { color: var(--accent); }
 .changes li span { margin-left: auto; color: var(--primary); }
 .commit { grid-column: 1 / 4; display: flex; align-items: center; gap: 12px; padding-top: 6px; padding-bottom: 6px; color: var(--muted-foreground); font-size: 9px; }
-.commit p { margin: 0; color: var(--foreground); }
+.commit p { margin: 0; min-width: 0; color: var(--foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#d-hash { color: var(--accent); flex: 0 0 auto; }
+/* Pushed right so the commit subject gets whatever width is left. */
+#d-today { margin-left: auto; flex: 0 0 auto; color: var(--primary); }
+#d-time { flex: 0 0 auto; }
 .pulse-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--primary); animation: pulse 1.8s infinite; }
+/* Stale = the data source stopped reporting. Dim the whole scene and kill the
+   heartbeat animation, so a frozen branch never reads as a live one. */
+.dev-scene.stale { opacity: .5; }
+.dev-scene.stale .pulse-dot { animation: none; background: var(--muted-foreground); }
 @keyframes pulse { 50% { opacity: .2; box-shadow: 0 0 10px var(--primary); } }
 
 /* ============== FOCUS (Pomodoro) ============== */

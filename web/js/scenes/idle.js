@@ -63,7 +63,10 @@ Desko.scenes.idle = (function () {
         clockS: document.getElementById("i-clock-s"),
         clockUk: document.getElementById("i-clock-uk"),
         date: document.getElementById("i-date"),
-        weather: document.querySelector("#scene-idle .weather"),
+        // Scenes are addressed by data-scene, not by id -- this used to look
+        // for "#scene-idle", which has never existed, so the handle was always
+        // null and the panel could never be hidden when weather was missing.
+        weather: document.querySelector('[data-scene="idle"] .weather'),
         wIcon: document.getElementById("i-w-icon"),
         wTemp: document.getElementById("i-w-temp"),
         wFeels: document.getElementById("i-w-feels"),
