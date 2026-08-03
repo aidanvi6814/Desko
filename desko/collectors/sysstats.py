@@ -74,28 +74,40 @@ def _query_lhm(w):
     so the Sensor table is empty. Callers must treat that as "offline", not as
     "linked" -- otherwise the server reports success while every temp is null.
     """
-    sensors = w.query("SELECT Name, SensorType, Value FROM Sensor")
+    # Two narrow queries instead of one broad one. The cost of a WMI query here
+    # is dominated by marshalling each returned row across the COM boundary, not
+    # by the filtering, so asking for 19 rows instead of 129 is 6x cheaper:
+    # measured 504ms -> 83ms, and this query was 96% of Desko's entire CPU use.
+    temps = w.query("SELECT Name, Value FROM Sensor WHERE SensorType='Temperature'")
+    loads = w.query(
+        "SELECT Name, Value FROM Sensor WHERE SensorType='Load' AND Name LIKE '%GPU Core%'"
+    )
+
     cpu_temp = None
     cpu_temp_fb = None
     gpu_temp = None
     gpu_load = None
-    for s in sensors:
+    for s in temps:
         name = s.Name or ""
-        stype = s.SensorType or ""
         val = s.Value
-        if stype == "Temperature":
-            if "CPU Package" in name or "Core (Tctl/Tdie)" in name or "Core (Tctl)" in name:
-                cpu_temp = val
-            elif "CPU" in name and cpu_temp_fb is None:
-                cpu_temp_fb = val
-            elif "GPU Core" in name and gpu_temp is None:
-                gpu_temp = val
-        elif stype == "Load":
-            if "GPU Core" in name and gpu_load is None:
-                gpu_load = val
+        if "CPU Package" in name or "Core (Tctl/Tdie)" in name or "Core (Tctl)" in name:
+            cpu_temp = val
+        elif "GPU Core" in name and gpu_temp is None:
+            gpu_temp = val
+        # "Distance to TjMax" is headroom, not temperature: on this machine it
+        # reads 32 while the package is at 82. Excluded so it can never become
+        # the fallback and report a plausible-looking but wrong number.
+        elif "CPU" in name and "TjMax" not in name and cpu_temp_fb is None:
+            cpu_temp_fb = val
+    for s in loads:
+        if gpu_load is None:
+            gpu_load = s.Value
+
     if cpu_temp is None:
         cpu_temp = cpu_temp_fb
-    return {"cpuTempC": cpu_temp, "gpuTempC": gpu_temp, "gpuPercent": gpu_load}, len(sensors)
+    # Row count drives the "namespace exists but LHM isn't running" check in the
+    # caller; both queries returning nothing still means offline.
+    return {"cpuTempC": cpu_temp, "gpuTempC": gpu_temp, "gpuPercent": gpu_load}, len(temps) + len(loads)
 
 
 def _lhm_thread_main(shared, temps_interval, stop_event):

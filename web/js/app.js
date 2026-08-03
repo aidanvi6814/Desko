@@ -194,6 +194,7 @@ window.Desko = (function () {
     lastPongAt = Date.now();
     pingSent = Date.now();
     send({ type: "ping", t: pingSent });
+    sendPerf();
     pingTimer = setInterval(function () {
       if (Date.now() - lastPongAt > PONG_TIMEOUT_MS) { dropSocket(); return; }
       pingSent = Date.now();
@@ -356,6 +357,15 @@ window.Desko = (function () {
     document.documentElement.classList.toggle("perf", !!on);
     try { localStorage.setItem(PERF_KEY, on ? "1" : "0"); } catch (e) {}
     syncPerfIndicator();
+    sendPerf();
+  }
+  // Perf mode is a per-device browser setting, but the server needs to know
+  // about it: the process sweep costs ~1s of CPU and backs off to a slower
+  // clock while the bolt is on, so "go easy on me" means fewer updates to
+  // render as well as a flatter theme. Sent on every toggle and on connect,
+  // since a reconnect gets a fresh server that has never heard of us.
+  function sendPerf() {
+    send({ type: "perf", on: perfOn() });
   }
   function syncPerfIndicator() {
     var b = el("perf-btn"); if (!b) return;

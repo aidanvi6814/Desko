@@ -159,8 +159,8 @@ def _sweep() -> dict:
 
 def _worker(state, config, shared, stop: threading.Event) -> None:
     poll = config.get("poll", {})
-    idle_sec = float(poll.get("procs_sec", 30.0))
-    active_sec = float(poll.get("procs_active_sec", 10.0))
+    normal_sec = float(poll.get("procs_sec", 10.0))
+    perf_sec = float(poll.get("procs_perf_sec", 30.0))
     while not stop.is_set():
         try:
             t0 = time.perf_counter()
@@ -169,8 +169,10 @@ def _worker(state, config, shared, stop: threading.Event) -> None:
             shared["payload"] = payload
         except Exception as e:
             log.warning("process sweep failed: %s", e)
-        # Sweep fast only while the Processes scene is the one on screen.
-        interval = active_sec if state.get("scene") == "procs" else idle_sec
+        # Back off while the phone has performance mode (the bolt) on. That
+        # switch means "this device is struggling", and fewer sweeps means
+        # fewer state updates for it to render as well as less CPU here.
+        interval = perf_sec if getattr(state, "perf_mode", False) else normal_sec
         stop.wait(max(2.0, interval))
 
 

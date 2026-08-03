@@ -277,6 +277,9 @@ async def _handle_client_msg(state: State, ws, raw: str) -> None:
             state.set_override(None)
     elif t == "focus":
         focus_mod.apply(state, msg)
+    elif t == "perf":
+        # Phone asked us to go easy: the process sweep uses a slower clock.
+        state.perf_mode = bool(msg.get("on"))
     elif t == "ping":
         # Latency probe: echo the client timestamp back, plus our own clock so
         # the client can estimate client/server clock skew (see app.js pong

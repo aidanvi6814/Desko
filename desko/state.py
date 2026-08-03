@@ -64,6 +64,12 @@ class State:
         # section to the phone every few seconds to say "nothing changed".
         # The git collector reads it to decide when VS Code has gone away.
         self.dev_seen_at: float = 0.0
+        # Whether the phone has performance mode (the bolt) switched on. A
+        # per-device browser setting, reported over the WebSocket, kept off the
+        # broadcast state because it is an input to the server rather than
+        # something any client needs told. Last client to speak wins, which is
+        # right for the one-phone setup Desko is built for.
+        self.perf_mode: bool = False
 
     # --- accessors ---------------------------------------------------------
     def snapshot(self) -> dict:
