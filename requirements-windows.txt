@@ -1,11 +1,14 @@
 # Windows-only collectors. Install AFTER requirements.txt:
 #   python -m pip install -r requirements-windows.txt
 #
-# All three are import-guarded in the code, so Desko still runs without them --
-# the corresponding widgets just stay hidden.
+# All of these are import-guarded in the code, so Desko still runs without them
+# -- the corresponding widgets just stay hidden.
 
 winsdk>=1.0.0b10   # Windows media session (now playing) -> Music scene
 wmi>=1.5.1         # reads LibreHardwareMonitor's WMI namespace -> temps/GPU
-pywin32>=306       # COM init (pythoncom) needed by wmi from a worker thread
+pywin32>=306       # COM init (pythoncom) for wmi; also exe icons for Processes
 pycaw>=20240210    # system master volume (Core Audio) -> Music scene volume slider
 comtypes>=1.2      # COM bindings pycaw builds on
+# Converts extracted exe icons to PNG for the Processes scene. Without it the
+# process list still works, showing names only.
+pillow>=10.0

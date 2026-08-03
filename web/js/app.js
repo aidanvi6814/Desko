@@ -1,8 +1,8 @@
 // Desko frontend core — v0 design port (system bar + scene frame + scene rail + launcher).
 // Plain script (no modules) for old Chromium on the realme 3.
 window.Desko = (function () {
-  var SCENES = ["idle", "music", "stats", "dev", "focus"];
-  var state = { scene: "idle", override: null, locked: false, info: null, media: null, lyrics: null, sys: null, weather: null, dev: null, game: null, focus: null, volume: null };
+  var SCENES = ["idle", "music", "stats", "procs", "dev", "focus"];
+  var state = { scene: "idle", override: null, locked: false, info: null, media: null, lyrics: null, sys: null, weather: null, dev: null, procs: null, game: null, focus: null, volume: null };
   var info = { hostname: "—", ip: "—" }; // from /api/info
   var scenes = {};
   var launcher = null;            // launcher module (optional)

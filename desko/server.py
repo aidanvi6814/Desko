@@ -23,6 +23,7 @@ from . import focus as focus_mod
 from .collectors import git as git_mod
 from .collectors import lyrics as lyrics_mod
 from .collectors import media as media_mod
+from .collectors import procs as procs_mod
 from .collectors import sysstats as sysstats_mod
 from .collectors import volume as volume_mod
 from .collectors import vscode as vscode_mod
@@ -57,6 +58,7 @@ def create_app(state: State, config: dict, demo: bool = False) -> web.Applicatio
     app.router.add_get("/api/config", api_config_get)
     app.router.add_post("/api/config", api_config_post)
     app.router.add_post("/api/vscode", vscode_mod.handle_post)
+    app.router.add_get("/api/proc-icon/{name}", api_proc_icon)
     app.router.add_post("/api/media/{action}", api_media_action)
     app.router.add_route("*", "/api/volume", api_volume)
     app.router.add_static("/static/", WEB_ROOT, show_index=False)
@@ -73,6 +75,27 @@ async def index(request: web.Request) -> web.Response:
 
 async def config_page(request: web.Request) -> web.Response:
     return web.FileResponse(os.path.join(WEB_ROOT, "config.html"))
+
+
+async def api_proc_icon(request: web.Request) -> web.Response:
+    """An app's icon for the Processes scene.
+
+    Served as a URL rather than inlined in the state payload so the browser
+    caches it: otherwise every refresh would re-send a few KB of base64 per row
+    down the WebSocket to a phone that can least afford it.
+
+    The name is looked up in the collector's dict, never used to build a
+    filesystem path, so there is no traversal surface here despite the route
+    taking a user-supplied segment.
+    """
+    png = procs_mod.ICON_CACHE.get(request.match_info.get("name", ""))
+    if not png:
+        raise web.HTTPNotFound()
+    return web.Response(
+        body=png,
+        content_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 # Editable via the /config page: (key, json-type, needs-restart-to-apply).
@@ -292,6 +315,8 @@ async def on_startup(app: web.Application) -> None:
         tasks.append(asyncio.create_task(sysstats_mod.start(state, config, app["http_session"])))
         # System volume (Core Audio via pycaw) — read + set from the Music scene.
         tasks.append(asyncio.create_task(volume_mod.start(state, config, app["http_session"])))
+        # Top memory consumers. Owns a thread because the sweep blocks ~950ms.
+        tasks.append(asyncio.create_task(procs_mod.start(state, config, app["http_session"])))
         # Git fallback for the Dev scene: watches the VS Code extension's
         # heartbeat and takes over reading the repo when the editor is closed.
         tasks.append(asyncio.create_task(git_mod.start(state, config, app["http_session"])))

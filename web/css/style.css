@@ -325,8 +325,29 @@ body.is-fs .fs-btn .fs-icon-collapse { display: block; }
 .meter strong.amber { color: var(--accent); }
 .meter small { font-size: .25em; color: var(--muted-foreground); margin-left: 4px; font-weight: 400; }
 .meter.warning strong { color: var(--accent); }
-/* Small caption under a meter's bar (e.g. Desko's own RAM under SYS.RAM). */
-.meter-note { display: block; margin-top: 5px; font-size: 8px; letter-spacing: .06em; color: var(--muted-foreground); }
+/* Top-3 memory consumers under the SYS.RAM bar. The glance version; the full
+   list is the Processes scene. */
+.ram-top { margin: 6px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+.ram-top li { display: flex; align-items: center; gap: 5px; font-size: 8px; color: var(--muted-foreground); }
+.ram-top img { width: 11px; height: 11px; object-fit: contain; flex: 0 0 auto; }
+.ram-top span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ram-top b { color: var(--primary); font-weight: 500; }
+
+/* ============== PROCESSES ============== */
+.procs-scene { display: grid; grid-template-rows: 1fr; }
+.procs-panel { display: flex; flex-direction: column; min-height: 0; }
+/* Two columns: the phone is 1520x720, so a single column would waste half the
+   width and show fewer rows than fit. */
+.proc-rows { margin: 10px 0 0; padding: 0; list-style: none; display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: min-content; gap: 5px 16px; overflow: hidden; }
+.proc-rows li { display: grid; grid-template-columns: 18px 1fr auto auto; align-items: center; gap: 4px 8px; padding: 5px 7px; background: var(--secondary); font-size: 10px; color: var(--foreground); }
+.proc-icon { width: 16px; height: 16px; object-fit: contain; display: block; }
+span.proc-icon { background: var(--muted-foreground); opacity: .2; }
+.proc-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.proc-count { color: var(--muted-foreground); font-size: 8px; }
+.proc-mb { color: var(--primary); }
+.proc-bar { grid-column: 1 / -1; display: block; height: 3px; background: rgb(255 255 255 / .06); }
+.proc-bar b { display: block; height: 100%; background: var(--primary); }
+.proc-empty { grid-column: 1 / -1; color: var(--muted-foreground); font-size: 10px; background: none; }
 .telemetry { display: flex; flex-direction: column; justify-content: space-between; }
 .chart-row { min-height: 0; flex: 1; display: flex; align-items: center; gap: 10px; color: var(--muted-foreground); font-size: 9px; border-bottom: 1px solid var(--border); }
 .chart-row:last-child { border: 0; }

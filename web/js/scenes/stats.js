@@ -79,9 +79,7 @@ Desko.scenes.stats = (function () {
     if (E.ram) E.ram.innerHTML = Math.round(sys.ramPercent || 0) + "<small>%</small>";
     if (E.ramFill) E.ramFill.style.width = (sys.ramPercent || 0) + "%";
     if (E.ramSub) setText(E.ramSub, (sys.ramUsedGb != null ? sys.ramUsedGb.toFixed(1) : "—") + " GB");
-    // Desko's own footprint. Rounded to whole MB: the value drifts by a few
-    // hundred KB between ticks and a decimal place would just flicker.
-    if (E.ramSelf) setText(E.ramSelf, sys.procMemMb != null ? "DESKO " + Math.round(sys.procMemMb) + " MB" : null);
+    renderRamTop(s && s.procs);
 
     // Session clock: reset when a game is (re)detected, otherwise counts from
     // when the Stats scene was entered. game.updatedAt is stamped once when a
@@ -104,6 +102,33 @@ Desko.scenes.stats = (function () {
     setTempChip(E.gpuChip, E.gpuTempBig, sys.gpuTempC);
     if (E.netDown) setText(E.netDown, fmtRate(sys.netDownKbs));
     if (E.netUp) setText(E.netUp, fmtRate(sys.netUpKbs));
+  }
+
+  // Top 3 memory consumers under the RAM bar. Icon where one could be
+  // extracted, name otherwise. The full list lives on the Processes scene;
+  // this is only the glance version, so it stays to three rows.
+  var ramTopKey = "";
+  function renderRamTop(procs) {
+    if (!E.ramTop) return;
+    var top = procs && procs.top;
+    if (!top || !top.length) { E.ramTop.innerHTML = ""; ramTopKey = ""; return; }
+    var key = "";
+    for (var k = 0; k < 3 && k < top.length; k++) key += top[k].name + ":" + top[k].mb + "|";
+    if (key === ramTopKey) return;   // avoid swapping <img>s and flickering
+    ramTopKey = key;
+
+    var html = "";
+    for (var i = 0; i < 3 && i < top.length; i++) {
+      var e = top[i];
+      var mb = e.mb >= 1024 ? (e.mb / 1024).toFixed(1) + "G" : Math.round(e.mb) + "M";
+      var label = String(e.label || "").replace(/[<>&"]/g, "");
+      var icon = e.icon
+        ? '<img src="/api/proc-icon/' + encodeURIComponent(e.name) +
+          '" alt="" onerror="this.style.visibility=\'hidden\'">'
+        : "";
+      html += "<li>" + icon + "<span>" + label + "</span><b>" + mb + "</b></li>";
+    }
+    E.ramTop.innerHTML = html;
   }
 
   function setTempChip(chip, valEl, t) {
@@ -136,7 +161,7 @@ Desko.scenes.stats = (function () {
         ram: document.getElementById("s-ram"),
         ramFill: document.getElementById("s-ram-fill"),
         ramSub: document.getElementById("s-ram-sub"),
-        ramSelf: document.getElementById("s-ram-self"),
+        ramTop: document.getElementById("s-ram-top"),
         sparkCpu: document.getElementById("s-spark-cpu"),
         sparkGpu: document.getElementById("s-spark-gpu"),
         sparkNet: document.getElementById("s-spark-net"),

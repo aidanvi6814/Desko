@@ -193,7 +193,7 @@
                  keeps distributing three rows, not four. -->
             <div>
               <div class="bar"><i id="s-ram-fill"></i></div>
-              <span class="meter-note" id="s-ram-self">—</span>
+              <ul class="ram-top" id="s-ram-top"></ul>
             </div>
           </div>
         </div>
@@ -218,6 +218,14 @@
       </section>
 
       <!-- DEV -->
+      <!-- PROCESSES -->
+      <section class="scene procs-scene" data-scene="procs" aria-label="Top memory consumers">
+        <div class="procs-panel panel">
+          <div class="panel-label"><span>MEMORY.BY_APP</span><span id="p-meta">—</span></div>
+          <ul class="proc-rows" id="p-rows"><li class="proc-empty">scanning…</li></ul>
+        </div>
+      </section>
+
       <section class="scene dev-scene" data-scene="dev" aria-label="Development dashboard">
         <div class="repo panel">
           <div class="panel-label"><span>VSCODE.ACTIVE</span><span id="d-focus">—</span></div>
@@ -347,6 +355,7 @@
   <script src="/static/js/scenes/idle.js"></script>
   <script src="/static/js/scenes/music.js"></script>
   <script src="/static/js/scenes/stats.js"></script>
+  <script src="/static/js/scenes/procs.js"></script>
   <script src="/static/js/scenes/dev.js"></script>
   <script src="/static/js/scenes/focus.js"></script>
   <script src="/static/js/scenes/launcher.js"></script>
