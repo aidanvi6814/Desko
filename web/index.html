@@ -189,7 +189,12 @@
           <div class="meter panel">
             <div class="panel-label"><span>SYS.RAM</span><span id="s-ram-sub">—</span></div>
             <strong id="s-ram">0<small>%</small></strong>
-            <div class="bar"><i id="s-ram-fill"></i></div>
+            <!-- Bar + caption share one flex child so .meter's space-between
+                 keeps distributing three rows, not four. -->
+            <div>
+              <div class="bar"><i id="s-ram-fill"></i></div>
+              <span class="meter-note" id="s-ram-self">—</span>
+            </div>
           </div>
         </div>
         <div class="telemetry panel">

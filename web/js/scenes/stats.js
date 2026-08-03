@@ -79,6 +79,9 @@ Desko.scenes.stats = (function () {
     if (E.ram) E.ram.innerHTML = Math.round(sys.ramPercent || 0) + "<small>%</small>";
     if (E.ramFill) E.ramFill.style.width = (sys.ramPercent || 0) + "%";
     if (E.ramSub) setText(E.ramSub, (sys.ramUsedGb != null ? sys.ramUsedGb.toFixed(1) : "—") + " GB");
+    // Desko's own footprint. Rounded to whole MB: the value drifts by a few
+    // hundred KB between ticks and a decimal place would just flicker.
+    if (E.ramSelf) setText(E.ramSelf, sys.procMemMb != null ? "DESKO " + Math.round(sys.procMemMb) + " MB" : null);
 
     // Session clock: reset when a game is (re)detected, otherwise counts from
     // when the Stats scene was entered. game.updatedAt is stamped once when a
@@ -133,6 +136,7 @@ Desko.scenes.stats = (function () {
         ram: document.getElementById("s-ram"),
         ramFill: document.getElementById("s-ram-fill"),
         ramSub: document.getElementById("s-ram-sub"),
+        ramSelf: document.getElementById("s-ram-self"),
         sparkCpu: document.getElementById("s-spark-cpu"),
         sparkGpu: document.getElementById("s-spark-gpu"),
         sparkNet: document.getElementById("s-spark-net"),

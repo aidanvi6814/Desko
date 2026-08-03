@@ -219,6 +219,10 @@ async def start(state, config, session) -> None:
     elif lhm_enabled and not HAS_WMI:
         log.info("wmi/pywin32 not available -- temps/GPU disabled")
 
+    # Our own process handle, created once. psutil.Process() with no pid is
+    # cheap but not free, and this is read every tick.
+    self_proc = psutil.Process()
+
     net_last = psutil.net_io_counters()
     last_time = time.monotonic()
     try:
@@ -239,12 +243,21 @@ async def start(state, config, session) -> None:
                 gpu = shared["gpuPercent"]
                 if gpu is not None:
                     gpu_hist.append(round(float(gpu), 1))
+                # Desko's own footprint, shown next to system RAM. Guarded
+                # separately from the rest: a failed read here (process gone,
+                # permissions) should blank one caption, not the whole panel.
+                try:
+                    proc_mem_mb = round(self_proc.memory_info().rss / (1024 ** 2), 1)
+                except Exception:
+                    proc_mem_mb = None
+
                 sysd = {
                     "cpuPercent": round(cpu_avg, 1),
                     "perCore": [round(x, 1) for x in per],
                     "ramPercent": round(vm.percent, 1),
                     "ramUsedGb": round(vm.used / (1024 ** 3), 2),
                     "ramTotalGb": round(vm.total / (1024 ** 3), 2),
+                    "procMemMb": proc_mem_mb,
                     "netUpKbs": round(up_kbs, 1),
                     "netDownKbs": round(dn_kbs, 1),
                     "gpuPercent": round(gpu, 1) if gpu is not None else None,
