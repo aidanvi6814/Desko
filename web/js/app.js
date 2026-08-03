@@ -1,7 +1,7 @@
 // Desko frontend core — v0 design port (system bar + scene frame + scene rail + launcher).
 // Plain script (no modules) for old Chromium on the realme 3.
 window.Desko = (function () {
-  var SCENES = ["idle", "music", "stats", "procs", "dev", "focus"];
+  var SCENES = ["idle", "music", "stats", "dev", "focus"];
   var state = { scene: "idle", override: null, locked: false, info: null, media: null, lyrics: null, sys: null, weather: null, dev: null, procs: null, game: null, focus: null, volume: null };
   var info = { hostname: "—", ip: "—" }; // from /api/info
   var scenes = {};
@@ -82,7 +82,7 @@ window.Desko = (function () {
       // Volume changes shouldn't re-run the track/marquee logic in
       // onStateChange, so route them to the music scene's dedicated handler.
       if (scenes.music && scenes.music.onVolume) try { scenes.music.onVolume(state); } catch (e) {}
-    } else if (section === "sys" || section === "game") {
+    } else if (section === "sys" || section === "game" || section === "procs") {
       if (scenes.stats && scenes.stats.onStateChange) try { scenes.stats.onStateChange(state); } catch (e) {}
     } else if (section === "weather") {
       if (scenes.idle && scenes.idle.onStateChange) try { scenes.idle.onStateChange(state); } catch (e) {}

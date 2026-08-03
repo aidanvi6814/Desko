@@ -21,7 +21,7 @@ log = logging.getLogger("desko.context")
 
 # Fixed carousel order. Mirrors state.SCENES; kept local so the rotation order
 # is explicit and independent of that tuple's ordering.
-ROTATION = ("idle", "music", "stats", "procs", "dev", "focus")
+ROTATION = ("idle", "music", "stats", "dev", "focus")
 
 # How often to look for a running game. Deliberately NOT the rotation interval:
 # _find_running_game walks every process on the box, which is one of the more
@@ -52,25 +52,18 @@ _GAME_ALIASES = {
 def _scene_available(state, name: str) -> bool:
     """Should auto-rotation park on this scene right now?
 
-    Two scenes can answer no:
-
-    - ``dev`` when it has no data source at all, neither the VS Code extension
-      nor the git fallback (see collectors/git.py).
-    - ``procs`` before its first sweep lands, or when it's disabled by config.
-
-    Parking a 60s slot on a scene that reads OFFLINE or "scanning..." is worse
-    than having one fewer scene in the carousel.
+    Only ``dev`` can answer no, and only when it has no data source at all --
+    neither the VS Code extension nor the git fallback (see collectors/git.py).
+    Parking a 60s slot on a scene that reads OFFLINE is worse than having one
+    fewer scene in the carousel.
 
     Deliberately consulted ONLY on auto-rotation: a manual swipe or scene pick
-    still lands on either, because "show me the thing I asked for, even if it's
+    still lands on Dev, because "show me the thing I asked for, even if it's
     empty" is the correct answer to an explicit request.
     """
     if name == "dev":
         dev = state.get("dev")
         return bool(dev) and dev.get("source") is not None
-    if name == "procs":
-        procs = state.get("procs")
-        return bool(procs and procs.get("top"))
     return True
 
 

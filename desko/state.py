@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 log = logging.getLogger("desko.state")
 
-SCENES = ("idle", "music", "stats", "procs", "dev", "focus")
+SCENES = ("idle", "music", "stats", "dev", "focus")
 
 
 def _detect_ip() -> str:

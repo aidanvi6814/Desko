@@ -37,7 +37,7 @@ import psutil
 
 log = logging.getLogger("desko.procs")
 
-TOP_N = 12          # entries kept in the payload (detail scene shows all)
+TOP_N = 20          # entries kept in the payload; the popup scrolls through them
 ICON_PX = 32
 PUBLISH_SEC = 1.0   # how often the async side checks for a fresh sweep
 
@@ -114,29 +114,54 @@ def _friendly(exe_path: str, name: str) -> str:
     return desc[:40]
 
 
+# name -> (total cpu seconds, wall clock) from the previous sweep, so CPU% is a
+# true average over the gap rather than psutil's per-call instantaneous value
+# (which needs two closely spaced samples and would double the sweep cost).
+_PREV_CPU: dict = {}
+_CORES = psutil.cpu_count() or 1
+
+
 def _sweep() -> dict:
-    """One full pass. Runs on the worker thread; ~950ms on a busy machine."""
+    """One full pass. Runs on the worker thread; ~1s on a busy machine.
+
+    cpu_times rides along for free-ish: the process handle is already open, so
+    adding it measured 984ms -> 1025ms across 367 processes.
+    """
     totals: dict = {}
-    for p in psutil.process_iter(["name", "memory_info"]):
+    for p in psutil.process_iter(["name", "memory_info", "cpu_times"]):
         try:
             name = p.info.get("name")
             mi = p.info.get("memory_info")
             if not name or not mi:
                 continue
+            ct = p.info.get("cpu_times")
+            secs = (ct.user + ct.system) if ct else 0.0
             slot = totals.get(name)
             if slot is None:
-                totals[name] = [mi.rss, 1, p.pid]
+                totals[name] = [mi.rss, 1, p.pid, secs]
             else:
                 slot[0] += mi.rss
                 slot[1] += 1
+                slot[3] += secs
         except Exception:
             continue  # process died mid-sweep; normal
 
+    now = time.monotonic()
     ranked = sorted(totals.items(), key=lambda kv: kv[1][0], reverse=True)[:TOP_N]
     total_ram = psutil.virtual_memory().total or 1
 
     out = []
-    for name, (rss, count, pid) in ranked:
+    for name, (rss, count, pid, cpu_secs) in ranked:
+        # CPU as a share of the whole machine, which is what Task Manager
+        # shows. None on the first sweep: there is no interval to divide by yet,
+        # and 0.0 would read as "idle" rather than "not known".
+        cpu_pct = None
+        prev = _PREV_CPU.get(name)
+        if prev is not None:
+            d_secs, d_wall = cpu_secs - prev[0], now - prev[1]
+            if d_wall > 0:
+                cpu_pct = round(max(0.0, d_secs / d_wall / _CORES * 100), 1)
+        _PREV_CPU[name] = (cpu_secs, now)
         if name not in _LABEL_CACHE:
             exe = ""
             try:
@@ -152,8 +177,14 @@ def _sweep() -> dict:
             "mb": round(rss / (1024 ** 2), 1),
             "count": count,
             "pct": round(rss / total_ram * 100, 1),
+            "cpu": cpu_pct,
             "icon": bool(ICON_CACHE.get(name)),
         })
+    # Names that dropped out of the ranking would otherwise accumulate forever.
+    if len(_PREV_CPU) > TOP_N * 12:
+        keep = {e["name"] for e in out}
+        for stale in [k for k in _PREV_CPU if k not in keep]:
+            _PREV_CPU.pop(stale, None)
     return {"top": out, "totalMb": round(total_ram / (1024 ** 2)), "updatedAt": time.time()}
 
 

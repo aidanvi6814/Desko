@@ -169,11 +169,8 @@
             <p class="eyebrow" id="s-eyebrow">PROCESS DETECTED</p>
             <h2 id="s-game">SYSTEM TELEMETRY</h2>
           </div>
+          <ul class="head-procs" id="s-head-procs" aria-label="Top memory consumers"></ul>
           <div class="fps"><strong id="s-load">0</strong><span>LOAD</span></div>
-          <div class="game-meta">
-            <span class="muted">SESSION</span>
-            <strong id="s-session">00:00:00</strong>
-          </div>
         </div>
         <div class="meters">
           <div class="meter panel">
@@ -186,16 +183,11 @@
             <strong id="s-gpu" class="">0<small>%</small></strong>
             <div class="bar"><i id="s-gpu-fill"></i></div>
           </div>
-          <div class="meter panel">
+          <button class="meter panel meter-btn" id="s-ram-card" type="button" aria-haspopup="dialog" aria-label="System RAM. Tap for the full process list.">
             <div class="panel-label"><span>SYS.RAM</span><span id="s-ram-sub">—</span></div>
             <strong id="s-ram">0<small>%</small></strong>
-            <!-- Bar + caption share one flex child so .meter's space-between
-                 keeps distributing three rows, not four. -->
-            <div>
-              <div class="bar"><i id="s-ram-fill"></i></div>
-              <ul class="ram-top" id="s-ram-top"></ul>
-            </div>
-          </div>
+            <div class="bar"><i id="s-ram-fill"></i></div>
+          </button>
         </div>
         <div class="telemetry panel">
           <div class="panel-label"><span>TELEMETRY.60S</span><span class="muted">LIVE</span></div>
@@ -218,14 +210,6 @@
       </section>
 
       <!-- DEV -->
-      <!-- PROCESSES -->
-      <section class="scene procs-scene" data-scene="procs" aria-label="Top memory consumers">
-        <div class="procs-panel panel">
-          <div class="panel-label"><span>MEMORY.BY_APP</span><span id="p-meta">—</span></div>
-          <ul class="proc-rows" id="p-rows"><li class="proc-empty">scanning…</li></ul>
-        </div>
-      </section>
-
       <section class="scene dev-scene" data-scene="dev" aria-label="Development dashboard">
         <div class="repo panel">
           <div class="panel-label"><span>VSCODE.ACTIVE</span><span id="d-focus">—</span></div>
@@ -316,6 +300,15 @@
 
   <!-- LAUNCHER (home) — minimal: wordmark + animated desk. Tap anywhere to
        return to the dashboard; swipe there to pick a scene. -->
+  <!-- Full memory breakdown. Opened by tapping the SYS.RAM meter; scrolls. -->
+  <div class="proc-modal" id="proc-modal" hidden role="dialog" aria-modal="true" aria-label="Memory by application">
+    <div class="proc-modal-card">
+      <div class="panel-label"><span>MEMORY.BY_APP</span><span id="pm-meta">—</span></div>
+      <ul class="proc-rows" id="pm-rows"><li class="proc-empty">scanning…</li></ul>
+      <button class="proc-modal-close" id="pm-close" type="button">CLOSE</button>
+    </div>
+  </div>
+
   <main class="launcher-shell" id="launcher" hidden aria-label="Desko home">
     <section class="launcher-content">
       <div class="brand-copy">
@@ -355,7 +348,6 @@
   <script src="/static/js/scenes/idle.js"></script>
   <script src="/static/js/scenes/music.js"></script>
   <script src="/static/js/scenes/stats.js"></script>
-  <script src="/static/js/scenes/procs.js"></script>
   <script src="/static/js/scenes/dev.js"></script>
   <script src="/static/js/scenes/focus.js"></script>
   <script src="/static/js/scenes/launcher.js"></script>
