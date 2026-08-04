@@ -29,8 +29,9 @@ DEFAULT_CONFIG = {
     # follow whatever workspace the extension last opened.
     "git_repo_path": "",
     "lhm_enabled": True,
-    # Top-memory-consumer list. The sweep costs ~1s of CPU, so it runs on its
-    # own thread and only speeds up while the Processes scene is on screen.
+    # Top-memory-consumer list, shown in the Stats scene header and its popup.
+    # The sweep costs ~1s of CPU, so it runs on its own thread and backs off to
+    # procs_perf_sec while the phone has performance mode (the bolt) on.
     "procs_enabled": True,
 }
 

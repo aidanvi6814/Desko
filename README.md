@@ -126,8 +126,10 @@ Same WiFi is the only requirement.
 python run.py --demo        # or:  desko.bat --demo
 ```
 
-Demo mode fabricates every scene (media, lyrics, stats, git, weather) and cycles them every
-20 s. Works on any OS with zero setup, no platform deps needed.
+Demo mode fabricates media, lyrics, stats, git and weather, then cycles Music, Stats, Dev and
+Idle every 20 s. Works on any OS with zero setup, no platform deps needed. (Focus, the process
+list and the volume slider aren't fabricated yet, so they stay empty here. See
+[Extending Desko](#wire-it-into-demo-mode).)
 
 ---
 
@@ -566,6 +568,293 @@ vscode-extension/          event-driven reporter (editor + git state -> POST /ap
 scripts/setup-lhm.ps1      one-time LibreHardwareMonitor installer
 THIRD-PARTY-NOTICES.md     bundled font and downloaded tool licensing
 ```
+
+---
+
+## Extending Desko
+
+Desko has exactly three kinds of moving part. Adding a feature means picking one and copying
+its nearest sibling.
+
+| You want to | Build a | It lives in |
+|---|---|---|
+| Put new **data** on the dashboard | **collector** | `desko/collectors/` |
+| Put a new **screen** in the carousel | **scene** | `web/js/scenes/` plus a `<section>` |
+| Let the phone **do** something to the PC | **control** | a route in `server.py`, or a WebSocket message type |
+
+The contract between them is one sentence:
+
+> A collector writes a named **section** into `State`. The server broadcasts it **only if it
+> actually changed**. The frontend merges it and hands it to the scene that cares.
+
+That's the whole architecture. There is no event bus, no plugin registry, no dependency
+injection, and nothing is auto-discovered. Wiring is a handful of explicit lists, and the
+sections below tell you exactly which ones.
+
+### Add a collector
+
+Worked example: a `disk` section showing free space.
+
+<details open>
+<summary><b>Five edits, in order</b></summary>
+
+**1. Write `desko/collectors/disk.py`.** Every collector is one `async def start(state, config, session)`
+that loops forever:
+
+```python
+"""Free disk space."""
+import asyncio
+import logging
+import time
+
+import psutil
+
+log = logging.getLogger("desko.disk")
+
+
+async def start(state, config, session) -> None:
+    interval = float(config.get("poll", {}).get("disk_sec", 60))
+    while True:
+        try:
+            u = psutil.disk_usage(config.get("disk_path") or "/")
+            state.set_section("disk", {
+                "freeGb": round(u.free / 1024 ** 3, 1),
+                "pct": u.percent,
+                "updatedAt": time.time(),
+            })
+        except Exception as e:                  # never let the loop die
+            log.warning("disk read failed: %s", e)
+            state.set_section("disk", None)     # None tells the scene to hide
+        await asyncio.sleep(interval)
+```
+
+**2. Declare the section** in `desko/state.py`, in the `_data` dict: `"disk": None`. This is what
+a freshly connected phone receives in its `snapshot`.
+
+**3. Register the task** in `desko/server.py`, inside `on_startup`:
+
+```python
+tasks.append(asyncio.create_task(disk_mod.start(state, config, app["http_session"])))
+```
+
+**4. Add the poll interval** to `DEFAULT_CONFIG` in `run.py` **and** to `config.example.json`.
+`load_config` back-fills anything missing from the defaults, so nobody's existing
+`config.json` breaks when you add a key.
+
+**5. Route it to a scene** in `web/js/app.js`: add `disk: null` to the `state` object, then send
+the section to whichever scene renders it, in `mergeUpdate`:
+
+```js
+} else if (section === "sys" || section === "game" || section === "procs" || section === "disk") {
+  if (scenes.stats && scenes.stats.onStateChange) try { scenes.stats.onStateChange(state); } catch (e) {}
+}
+```
+
+Sections not listed there fall through to "notify the active scene", which is fine for data only
+one scene uses. The explicit branches exist so a section can update a scene that **isn't** on
+screen, which is what makes a scene correct the instant you swipe to it.
+
+</details>
+
+<details>
+<summary><b>The five rules a collector has to follow</b></summary>
+
+**1. Never raise out of the loop.** Nothing restarts a dead collector, and its section freezes at
+whatever it last published. Wrap the body, log a warning, keep sleeping.
+
+**2. Publish `None` when the source is gone.** Every scene is written to hide a widget whose
+section is null. That single convention is the entire degradation strategy, and it's why the
+server boots fine on a Mac with half the collectors inert.
+
+**3. Import platform modules inside a guard, never at module top level.** A bare
+`import winsdk` crashes the process on Linux before anything gets the chance to degrade
+gracefully. Copy the `try/except` header from `media.py`, `volume.py` or `procs.py`:
+
+```python
+_HAS_ICONS = False
+try:
+    import win32gui
+    from PIL import Image
+    _HAS_ICONS = True
+except Exception:
+    pass
+```
+
+**4. Use `patch_section` for chatty little fields.** `set_section` broadcasts the whole section.
+The media collector updates the playhead 3x a second, and re-sending the base64 album art each
+time would saturate the link, so it patches just `{"position": ...}`. Both sides merge partials,
+so omitted fields survive.
+
+**5. Anything that blocks needs its own thread.** The event loop also serves the WebSocket, the
+media position patches and the lyric timing, so a synchronous stall is visible on the phone as a
+stutter. The threshold in practice is a few milliseconds. Measured on a 367-process box:
+
+| Call | Cost | Verdict |
+|---|--:|---|
+| `psutil.process_iter(["name"])` | 2 ms | fine on the loop |
+| `+ memory_info` | 984 ms | **needs a thread** |
+| `+ cpu_times` | 1025 ms | (why per-app CPU was nearly free to add) |
+| WMI `Win32_Process` | 1923 ms | avoid |
+
+**Anything touching COM or WinRT needs a thread regardless of speed**, because those APIs are
+apartment-bound. `media.py`, `sysstats.py`, `volume.py` and `procs.py` each own one. The pattern
+is always the same: the thread writes into a shared dict, and a cheap async loop publishes from
+it. `procs.py` is the shortest copy-paste template.
+
+</details>
+
+### Add a scene
+
+<details>
+<summary><b>One scene, five places to name it</b></summary>
+
+There is no scene auto-registration, so a new scene has to be listed in five spots. Miss one and
+you get a specific, diagnosable failure, listed here so you don't have to bisect it:
+
+| Edit | If you forget it |
+|---|---|
+| `<section class="scene x-scene" data-scene="x">` in `web/index.html` | scene switches to a blank frame |
+| `<script src="/static/js/scenes/x.js">` in `web/index.html` | markup shows but never populates |
+| `SCENES` in `desko/state.py` | swipe skips it, `override` for it is rejected |
+| `ROTATION` in `desko/context.py` | reachable by swipe, never by the carousel |
+| `SCENES` in `web/js/app.js` | `?scene=x` is ignored |
+
+The module itself is an object on the `Desko.scenes` namespace, no imports and no exports:
+
+```js
+Desko.scenes.x = (function () {
+  var E = {};
+  return {
+    onEnter: function (state) { E.foo = document.getElementById("x-foo"); render(state); },
+    onStateChange: function (state) { render(state); },
+    onTick: function (state, nowMs) {},
+    onExit: function () {},
+  };
+})();
+```
+
+| Hook | Called | Use it for |
+|---|---|---|
+| `onEnter(state)` | scene becomes visible | cache DOM lookups, wire listeners once, first paint |
+| `onStateChange(state)` | a routed section changed | all data rendering |
+| `onTick(state, nowMs)` | 4x/s, active scene only | anything animating between updates: clocks, countdowns, the interpolated playhead |
+| `onExit()` | scene leaves | close popups, stop anything you started |
+
+`onTick` exists because **the server never pushes a clock**. Sending a time update every second
+to keep a countdown moving would be pure waste, so scenes interpolate locally and the socket
+stays quiet. `onExit` matters more than it looks: the stats scene closes its process popup there,
+because otherwise a rotation leaves the popup floating over the Music scene.
+
+**If your scene can be empty**, teach `_scene_available()` in `context.py` to skip it. Auto-rotation
+consults it, a deliberate swipe does not, because "show me the thing I asked for, even if it's
+empty" is the right answer to an explicit request. The Dev scene is the worked example.
+
+</details>
+
+### Add a control (phone to PC)
+
+<details>
+<summary><b>Pick the WebSocket or an HTTP route, then respect the thread boundary</b></summary>
+
+**WebSocket** for anything the server should remember, by adding a branch to `_handle_client_msg`
+in `server.py`. `perf` is the smallest possible example, all of three lines:
+
+```python
+elif t == "perf":
+    state.perf_mode = bool(msg.get("on"))
+```
+
+Note it sets a **plain attribute**, not a section. `perf_mode` and `dev_seen_at` are deliberately
+kept off the broadcast state because they're inputs to the server, not things any client needs
+told, and putting them in `_data` would push an update to the phone every heartbeat to announce
+that nothing changed.
+
+**An HTTP route** for fire-and-forget actions, especially ones something other than the dashboard
+might call. `POST /api/vscode` is one; the extension is a separate process.
+
+**The one hard rule: never call COM from the event loop.** A control that drives a threaded
+collector pushes onto a `queue.Queue` and lets the owning thread pop it. `state.request_media_command`
+and `state.request_volume` are the two existing examples, and both return immediately:
+
+```python
+def request_volume(self, command: str) -> None:
+    if not (command == "mute" or command.startswith("set:")):
+        return                                  # validate here, not on the thread
+    try:
+        self.volume_commands.put_nowait(command)
+    except Exception:
+        pass
+```
+
+</details>
+
+### Frontend house rules
+
+<details>
+<summary><b>Why the JS looks like it's from 2013</b></summary>
+
+The target device is an old Chromium on a budget phone, and every constraint below is
+load-bearing rather than stylistic:
+
+- **`var` and function expressions.** There is currently not a single arrow function, `let` or
+  `const` in `web/js/`. Match that.
+- **No modules, no bundler, no build step, no CDN.** Plain `<script>` tags attaching to one
+  global `Desko` namespace. Everything is served off the LAN, so the dashboard works with the
+  internet down.
+- **No new frontend dependencies.** If you need a library, you probably need less feature.
+- **Every expensive effect needs a `html.perf` counterpart.** Blur, glow, shadow transitions and
+  infinite animations must all collapse to something flat under performance mode. `style.css`
+  ends with a **PERF MODE** section (7 numbered groups, from line ~520) that strips each class of
+  cost and says why it was worth stripping. Add yours there, then verify with `?perf=1`.
+- **Use the CSS custom properties** in `:root` (`--primary`, `--muted-foreground`, `--border`,
+  `--accent`, `--bad`). No hardcoded hex.
+- **Design for 1520x720 landscape.** That's the realme 3 this was built for. It's the floor, not
+  a suggestion.
+
+Measure before you argue with any of this: **`?fps=1`** puts a live frame-time readout on screen.
+Watch the `max` figure while lyrics are scrolling, since that's where a regression shows, not in
+the average.
+
+</details>
+
+### Wire it into demo mode
+
+`desko/demo.py` fabricates sections so scenes are reviewable with no media playing, no
+LibreHardwareMonitor, no VS Code and no game running. **Add fabricated data for your section
+there.** It's the only way somebody on macOS can review your Windows-only feature, and the
+fastest way to test an empty or extreme state without arranging one for real. Demo mode reuses
+the real `State` broadcast path, so the frontend genuinely cannot tell the difference.
+
+**It is currently incomplete, and that makes a good first contribution.** Today it covers:
+
+| Section | Fabricated |
+|---|:--:|
+| `media`, `lyrics`, `sys`, `dev`, `weather` | yes |
+| `focus`, `procs`, `volume`, `game` | **no** |
+
+Its own rotation is `music, stats, dev, idle`, so **the Focus scene never appears in demo mode
+at all**, and the Stats header icons and the SYS.RAM popup are empty because `procs` is never
+filled in. Adding those means fabricating the sections in `start()` and adding `"focus"` to the
+`SCENES` tuple at the top of `demo.py`.
+
+### Before you open a PR
+
+```powershell
+python run.py --demo         # every scene still renders and cycles
+python run.py                # real data; watch the log for collector warnings
+```
+
+- **Check it degrades.** Rename or uninstall whatever your collector depends on and confirm the
+  widget hides instead of showing a dead `-`.
+- **Check the idle cost.** The design target is under 1% CPU and under 100 MB RAM at idle. A
+  collector polling something expensive on a short interval is the usual way that gets lost.
+- **Check the wire.** A section that re-broadcasts unchanged data every tick is a bug, even
+  though nothing visibly breaks. `set_section` deep-compares for exactly this reason, so if you
+  see constant traffic in `/api/state` with nothing happening, you're rebuilding an equal-but-not-identical
+  payload (a fresh `updatedAt` on every poll is the usual culprit).
+
+`IMPLEMENTATION_PLAN.md` holds the original architecture and the binding data contracts for each
+section. `AGENTS.md` is the short version for coding agents.
 
 ---
 

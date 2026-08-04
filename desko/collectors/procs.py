@@ -15,9 +15,11 @@ LHM thread in sysstats.py.
 ADAPTIVE INTERVAL
 Even threaded, ~1s of CPU per sweep is not free: at 10s that is ~9.5% of a core
 sustained, which would make this the most expensive thing Desko does. So it
-sweeps fast only while you are actually looking at the Processes scene, and
-backs off to a slow clock otherwise. Memory rankings barely move minute to
-minute, so the slow clock costs nothing in usefulness.
+backs off to a slower clock (procs_perf_sec) whenever the phone has performance
+mode switched on, since that bolt means "this device is struggling" and fewer
+sweeps means fewer updates for it to render as well as less CPU here. Memory
+rankings barely move minute to minute, so the slow clock costs nothing in
+usefulness.
 
 NOTHING IS FILTERED. svchost.exe and Memory Compression will usually occupy the
 top slots. That is deliberate: this reports what the OS reports.
