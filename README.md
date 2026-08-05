@@ -7,6 +7,8 @@
 Music with karaoke lyrics · live PC vitals · git status · a clock that actually looks good ·
 a Pomodoro timer, pushed from your PC to any old phone on your WiFi.
 
+Video Post on Linkedin here! - [Video](https://www.linkedin.com/posts/abhxy_opensource-sideproject-devtool-activity-7489742414908383232-9oQ8?utm_source=share&utm_medium=member_desktop&rcm=ACoAADEmD-MBLCaKr-7Rsvyeyu9R7NAhF6GEuDM)
+
 [![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![Windows](https://img.shields.io/badge/Windows-full-0078D4?style=flat-square&logo=windows&logoColor=white)](#platform-support)
 [![macOS](https://img.shields.io/badge/macOS%20%2F%20Linux-partial-999?style=flat-square&logo=apple&logoColor=white)](#platform-support)
